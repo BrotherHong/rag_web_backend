@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# FastAPI
+*.db
+*.sqlite
+
+# 環境變數（敏感資訊，絕對不要提交到 Git）
+.env
+.env.local
+.env.production
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 上傳檔案
+uploads/*
+!uploads/.gitkeep
+
+# 日誌
+logs/*
+!logs/.gitkeep
+*.log
+
+# Alembic（保留遷移檔案，但不提交個人測試遷移）
+# alembic/versions/*.py  # 註解掉，因為遷移檔案需要版本控制
+# !alembic/versions/__init__.py
+
+# 測試
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker（不要忽略 .dockerignore，它需要版本控制）
+# .dockerignore
+
+# Docker volumes
+postgres_data/
+redis_data/
+qdrant_data/

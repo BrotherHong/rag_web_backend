@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# 環境變數
+.env
+.env.local
+
+# 上傳檔案和日誌
+uploads/*
+logs/*
+
+# 測試
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Docker
+.dockerignore
+docker-compose.yml
+docker-compose.prod.yml
+
+# 文件
+README.md
+backend_docs/
+*.md
+
+# OS
+.DS_Store
+Thumbs.db
