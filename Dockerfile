@@ -7,6 +7,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     gcc \
     postgresql-client \
+    libmagic1 \
     && rm -rf /var/lib/apt/lists/*
 
 # 複製依賴檔案

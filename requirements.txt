@@ -23,7 +23,7 @@ pydantic-settings==2.5.0
 email-validator==2.2.0
 
 # 檔案處理
-python-magic-bin==0.4.14
+python-magic==0.4.27  # Linux 版本
 pypdf2==3.0.0
 python-docx==1.1.0
 pillow==10.4.0
