@@ -2,6 +2,7 @@
 
 import os
 import math
+from datetime import datetime
 from typing import Optional, List
 from fastapi import (
     APIRouter, 
@@ -33,6 +34,8 @@ from app.schemas.file import (
 )
 from app.services.file_storage import file_storage
 from app.services.activity import activity_service
+from app.services.mock_file_processor import mock_file_processor
+from app.services.file_processor_interface import ProcessingStatus
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -179,8 +182,48 @@ async def upload_file(
         department_id=current_user.department_id
     )
     
-    # 7. TODO: 觸發 Celery 背景任務處理檔案
+    # 7. 觸發檔案處理（使用模擬處理器進行演示）
+    # 在生產環境中，這應該是非同步的 Celery 任務
     # process_file_task.delay(db_file.id)
+    try:
+        # 記錄處理開始時間
+        db_file.processing_started_at = datetime.now()
+        db_file.status = "processing"
+        await db.commit()
+        
+        # 呼叫模擬處理器（這是同步演示，實際應為背景任務）
+        processing_result = await mock_file_processor.process_file(
+            file_id=db_file.id,
+            file_path=file_path,
+            file_type=db_file.file_type,
+            options={"description": description}
+        )
+        
+        # 更新檔案狀態
+        db_file.processing_completed_at = datetime.now()
+        
+        if processing_result.status == ProcessingStatus.COMPLETED:
+            db_file.status = "active"
+            db_file.chunk_count = processing_result.chunk_count
+            db_file.vector_count = processing_result.vector_count
+            db_file.is_vectorized = True
+            db_file.processing_progress = 100
+            db_file.processing_step = "completed"
+        elif processing_result.status == ProcessingStatus.FAILED:
+            db_file.status = "failed"
+            db_file.error_message = processing_result.error_message
+            db_file.processing_step = "failed"
+        
+        await db.commit()
+        await db.refresh(db_file)
+        
+    except Exception as e:
+        # 處理失敗不影響上傳，只記錄錯誤
+        db_file.status = "failed"
+        db_file.error_message = str(e)
+        db_file.processing_completed_at = datetime.now()
+        await db.commit()
+        print(f"檔案處理失敗: {str(e)}")
     
     return FileUploadResponse(
         id=db_file.id,
@@ -188,8 +231,129 @@ async def upload_file(
         original_filename=db_file.original_filename,
         file_size=db_file.file_size,
         status=db_file.status,
-        message="檔案上傳成功，正在處理中..."
+        message="檔案上傳並處理完成" if db_file.status == "active" else "檔案上傳成功，處理中..."
     )
+
+
+@router.post("/batch-upload")
+async def batch_upload_files(
+    files: List[UploadFile] = File(..., description="上傳的多個檔案"),
+    category_id: Optional[int] = Form(None, description="分類ID"),
+    description: Optional[str] = Form(None, description="檔案描述（套用到所有檔案）"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """批次上傳檔案
+    
+    - 支援一次上傳多個檔案
+    - 所有檔案使用相同的分類和描述
+    - 返回每個檔案的上傳結果
+    - 部分失敗不影響其他檔案
+    """
+    if len(files) > 10:
+        raise HTTPException(status_code=400, detail="一次最多上傳 10 個檔案")
+    
+    # 驗證分類（如果提供）
+    if category_id:
+        category = await db.get(Category, category_id)
+        if not category:
+            raise HTTPException(status_code=404, detail="分類不存在")
+        if category.department_id != current_user.department_id:
+            raise HTTPException(status_code=403, detail="無權使用此分類")
+    
+    results = []
+    uploaded_file_ids = []
+    
+    # 處理每個檔案
+    for file in files:
+        try:
+            # 1. 驗證檔案
+            is_valid, error_msg = file_storage.validate_file(file)
+            if not is_valid:
+                results.append({
+                    "filename": file.filename,
+                    "success": False,
+                    "error": error_msg
+                })
+                continue
+            
+            # 2. 儲存檔案
+            unique_filename, file_path, file_size = await file_storage.save_upload_file(
+                file, 
+                current_user.department_id
+            )
+            
+            # 3. 取得檔案資訊
+            ext = os.path.splitext(file.filename)[1].lower()
+            
+            # 4. 建立資料庫記錄
+            db_file = FileModel(
+                filename=unique_filename,
+                original_filename=file.filename,
+                file_path=file_path,
+                file_size=file_size,
+                file_type=ext[1:] if ext else "unknown",
+                mime_type=file.content_type,
+                category_id=category_id,
+                department_id=current_user.department_id,
+                uploader_id=current_user.id,
+                description=description,
+                status="pending"
+            )
+            
+            db.add(db_file)
+            await db.commit()
+            await db.refresh(db_file)
+            
+            uploaded_file_ids.append(db_file.id)
+            
+            results.append({
+                "filename": file.filename,
+                "success": True,
+                "file_id": db_file.id,
+                "status": db_file.status
+            })
+            
+        except Exception as e:
+            results.append({
+                "filename": file.filename,
+                "success": False,
+                "error": str(e)
+            })
+    
+    # 記錄批次上傳活動
+    await activity_service.log_activity(
+        db=db,
+        user_id=current_user.id,
+        action="upload",
+        entity_type="file",
+        description=f"批次上傳 {len(uploaded_file_ids)} 個檔案",
+        department_id=current_user.department_id,
+        metadata={"file_ids": uploaded_file_ids}
+    )
+    
+    # 批次處理檔案（背景任務）
+    # 注意：這裡應該使用 Celery 或其他任務隊列
+    # 目前使用模擬處理器演示
+    if uploaded_file_ids:
+        try:
+            # 這裡應該調用 batch_process，但為了演示，我們不實際處理
+            # 實際環境中應該是：batch_process_task.delay(uploaded_file_ids)
+            pass
+        except Exception as e:
+            print(f"批次處理觸發失敗: {str(e)}")
+    
+    # 統計結果
+    success_count = sum(1 for r in results if r["success"])
+    failed_count = len(results) - success_count
+    
+    return {
+        "total": len(files),
+        "success": success_count,
+        "failed": failed_count,
+        "results": results,
+        "message": f"成功上傳 {success_count} 個檔案，{failed_count} 個失敗"
+    }
 
 
 @router.get("/{file_id}", response_model=FileDetailResponse)
@@ -223,6 +387,50 @@ async def get_file(
         raise HTTPException(status_code=403, detail="無權限查看此檔案")
     
     return FileDetailResponse.from_orm(file)
+
+
+@router.get("/{file_id}/processing-status")
+async def get_file_processing_status(
+    file_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """取得檔案處理狀態
+    
+    - 返回當前處理步驟和進度
+    - 包含處理時間資訊
+    - 權限檢查：只能查看自己處室的檔案
+    """
+    # 查詢檔案
+    file = await db.get(FileModel, file_id)
+    
+    if not file:
+        raise HTTPException(status_code=404, detail="檔案不存在")
+    
+    # 權限檢查
+    if file.department_id != current_user.department_id and not current_user.is_super_admin:
+        raise HTTPException(status_code=403, detail="無權限查看此檔案")
+    
+    # 計算處理時間
+    processing_duration = None
+    if file.processing_started_at:
+        end_time = file.processing_completed_at or datetime.now()
+        processing_duration = (end_time - file.processing_started_at).total_seconds()
+    
+    return {
+        "file_id": file.id,
+        "filename": file.original_filename,
+        "status": file.status.value if hasattr(file.status, 'value') else file.status,
+        "processing_step": file.processing_step,
+        "processing_progress": file.processing_progress,
+        "processing_started_at": file.processing_started_at,
+        "processing_completed_at": file.processing_completed_at,
+        "processing_duration_seconds": processing_duration,
+        "chunk_count": file.chunk_count,
+        "vector_count": file.vector_count,
+        "error_message": file.error_message,
+        "is_vectorized": file.is_vectorized
+    }
 
 
 @router.put("/{file_id}")

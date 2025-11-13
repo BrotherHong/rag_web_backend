@@ -1,7 +1,8 @@
 """檔案模型"""
 
 from typing import List, TYPE_CHECKING
-from sqlalchemy import String, Integer, ForeignKey, Text, Boolean, Enum as SQLEnum
+from datetime import datetime
+from sqlalchemy import String, Integer, ForeignKey, Text, Boolean, Enum as SQLEnum, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from enum import Enum
 from app.core.database import Base
@@ -34,6 +35,12 @@ class File(Base, TimestampMixin):
     filename: Mapped[str] = mapped_column(
         String(255),
         nullable=False,
+        comment="儲存的檔案名稱（唯一）"
+    )
+    
+    original_filename: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
         comment="原始檔案名稱"
     )
     
@@ -53,7 +60,19 @@ class File(Base, TimestampMixin):
     file_type: Mapped[str] = mapped_column(
         String(50),
         nullable=False,
-        comment="檔案類型 (MIME type)"
+        comment="檔案類型 (pdf, docx, txt, md)"
+    )
+    
+    mime_type: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="MIME 類型"
+    )
+    
+    description: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="檔案描述"
     )
     
     # 處理狀態
@@ -84,6 +103,39 @@ class File(Base, TimestampMixin):
         default=0,
         nullable=False,
         comment="切分的區塊數量"
+    )
+    
+    vector_count: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        nullable=False,
+        comment="生成的向量數量"
+    )
+    
+    # 處理進度追蹤
+    processing_step: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+        comment="當前處理步驟"
+    )
+    
+    processing_progress: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        nullable=False,
+        comment="處理進度 (0-100)"
+    )
+    
+    processing_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+        comment="處理開始時間"
+    )
+    
+    processing_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+        comment="處理完成時間"
     )
     
     # 文件內容摘要
