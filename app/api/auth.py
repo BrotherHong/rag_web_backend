@@ -1,0 +1,160 @@
+"""認證相關 API 路由"""
+
+from datetime import timedelta
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.database import get_db
+from app.core.security import (
+    authenticate_user,
+    create_access_token,
+    get_current_user,
+    get_password_hash,
+    verify_password,
+)
+from app.models import User
+from app.schemas import (
+    Token,
+    LoginRequest,
+    UserResponse,
+    ChangePasswordRequest,
+    MessageResponse,
+)
+from app.config import settings
+
+router = APIRouter(prefix="/auth", tags=["認證"])
+
+
+@router.post("/login", response_model=Token, summary="使用者登入")
+async def login(
+    login_data: LoginRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    使用者登入
+    
+    - **username**: 使用者名稱
+    - **password**: 密碼
+    
+    返回 JWT Access Token
+    """
+    user = await authenticate_user(db, login_data.username, login_data.password)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="帳號或密碼錯誤",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="使用者帳號已停用"
+        )
+    
+    # 建立 JWT Token
+    access_token_expires = timedelta(minutes=settings.JWT_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": str(user.id)},
+        expires_delta=access_token_expires
+    )
+    
+    return Token(access_token=access_token, token_type="bearer")
+
+
+@router.post("/token", response_model=Token, summary="OAuth2 密碼流登入")
+async def login_for_access_token(
+    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    OAuth2 密碼流登入端點（供 Swagger UI 使用）
+    
+    - **username**: 使用者名稱
+    - **password**: 密碼
+    
+    返回 JWT Access Token
+    """
+    user = await authenticate_user(db, form_data.username, form_data.password)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="帳號或密碼錯誤",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="使用者帳號已停用"
+        )
+    
+    access_token_expires = timedelta(minutes=settings.JWT_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": str(user.id)},
+        expires_delta=access_token_expires
+    )
+    
+    return Token(access_token=access_token, token_type="bearer")
+
+
+@router.get("/me", response_model=UserResponse, summary="取得當前使用者資訊")
+async def get_current_user_info(
+    current_user: User = Depends(get_current_user)
+):
+    """
+    取得當前已認證使用者的資訊
+    
+    需要提供有效的 JWT Token
+    """
+    return current_user
+
+
+@router.post("/change-password", response_model=MessageResponse, summary="修改密碼")
+async def change_password(
+    password_data: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    修改當前使用者的密碼
+    
+    - **old_password**: 舊密碼
+    - **new_password**: 新密碼（至少 6 個字元）
+    """
+    # 驗證舊密碼
+    if not verify_password(password_data.old_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="舊密碼錯誤"
+        )
+    
+    # 更新密碼
+    current_user.hashed_password = get_password_hash(password_data.new_password)
+    db.add(current_user)
+    await db.commit()
+    
+    return MessageResponse(
+        message="密碼修改成功",
+        detail="請使用新密碼重新登入"
+    )
+
+
+@router.post("/logout", response_model=MessageResponse, summary="使用者登出")
+async def logout(current_user: User = Depends(get_current_user)):
+    """
+    使用者登出
+    
+    注意：由於使用 JWT，實際的登出需要在客戶端刪除 Token
+    此端點主要用於記錄登出事件
+    """
+    # TODO: 可以在這裡記錄登出活動到 Activity 表
+    return MessageResponse(
+        message="登出成功",
+        detail="請在客戶端刪除 Token"
+    )

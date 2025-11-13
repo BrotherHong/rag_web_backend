@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     QDRANT_URL: str
     QDRANT_API_KEY: str = ""
     QDRANT_COLLECTION: str = "rag_documents"
+    EMBEDDING_DIM: int = 1536  # OpenAI text-embedding-ada-002 維度
     
     # 檔案上傳
     MAX_FILE_SIZE: int = 52428800  # 50MB

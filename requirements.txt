@@ -16,6 +16,7 @@ flower==2.0.0
 # 認證與安全
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
+bcrypt==4.0.1  # 兼容 passlib 的版本
 
 # 資料驗證
 pydantic==2.9.0

@@ -1,17 +1,41 @@
 """FastAPI 應用程式主入口"""
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
+from app.core.database import init_db, close_db
+from app.core.redis import init_redis, close_redis
+from app.core.qdrant import init_qdrant, close_qdrant
+from app.api import api_router  # 導入 API 路由
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """應用程式生命週期管理"""
+    # 啟動時初始化所有連線
+    await init_db()
+    await init_redis()
+    await init_qdrant()
+    print("✅ 所有資料庫連線已初始化")
+    
+    yield
+    
+    # 關閉時清理所有連線
+    await close_db()
+    await close_redis()
+    await close_qdrant()
+    print("✅ 所有資料庫連線已關閉")
 
 # 建立 FastAPI 應用程式
 app = FastAPI(
     title=settings.APP_NAME,
     version="1.0.0",
     description="RAG 知識庫管理系統後端 API",
-    docs_url=f"{settings.API_V1_PREFIX}/docs",
-    redoc_url=f"{settings.API_V1_PREFIX}/redoc",
-    openapi_url=f"{settings.API_V1_PREFIX}/openapi.json"
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
+    lifespan=lifespan  # 添加生命週期管理
 )
 
 # 設定 CORS
@@ -22,6 +46,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 註冊 API 路由
+app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
 
 @app.get("/")
@@ -49,8 +76,8 @@ async def api_root():
     """API 根端點"""
     return {
         "message": "RAG Knowledge Base API v1",
-        "docs": f"{settings.API_V1_PREFIX}/docs",
-        "redoc": f"{settings.API_V1_PREFIX}/redoc"
+        "docs": "/docs",
+        "redoc": "/redoc"
     }
 
 
