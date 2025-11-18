@@ -36,7 +36,7 @@ async def get_categories(
     - 按名稱排序
     - 可選包含檔案數量統計
     """
-    # 查詢分類
+    # 查詢分類（只查詢當前處室）
     query = select(Category).where(
         Category.department_id == current_user.department_id
     ).order_by(Category.name)
@@ -55,15 +55,62 @@ async def get_categories(
             )
             
             # 建立 schema 並設定 file_count
-            cat_schema = CategorySchema.from_orm(category)
+            cat_schema = CategorySchema.model_validate(category)
             cat_schema.file_count = file_count
             category_list.append(cat_schema)
         
         return CategoryListResponse(items=category_list)
     else:
         return CategoryListResponse(
-            items=[CategorySchema.from_orm(c) for c in categories]
+            items=[CategorySchema.model_validate(c) for c in categories]
         )
+
+
+@router.get("/stats", response_model=CategoryStatsResponse)
+async def get_category_stats(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """取得分類統計資料
+    
+    - 各分類的檔案數量
+    - 各分類的總大小
+    - 佔比百分比
+    """
+    # 查詢各分類的統計
+    query = await db.execute(
+        select(
+            Category.id,
+            Category.name,
+            Category.color,
+            func.count(File.id).label('file_count'),
+            func.coalesce(func.sum(File.file_size), 0).label('total_size')
+        )
+        .outerjoin(File, File.category_id == Category.id)
+        .where(Category.department_id == current_user.department_id)
+        .group_by(Category.id, Category.name, Category.color)
+        .order_by(desc('file_count'))
+    )
+    
+    results = query.all()
+    
+    # 計算總大小（用於計算百分比）
+    total_size = sum(row.total_size for row in results)
+    
+    # 組織結果
+    stats = []
+    for row in results:
+        percentage = (row.total_size / total_size * 100) if total_size > 0 else 0
+        stats.append(CategoryStatItem(
+            id=row.id,
+            name=row.name,
+            color=row.color,
+            file_count=row.file_count,
+            total_size=row.total_size,
+            percentage=round(percentage, 1)
+        ))
+    
+    return CategoryStatsResponse(stats=stats)
 
 
 @router.get("/{category_id}", response_model=CategorySchema)
@@ -87,7 +134,7 @@ async def get_category(
         select(func.count(File.id)).where(File.category_id == category_id)
     )
     
-    cat_schema = CategorySchema.from_orm(category)
+    cat_schema = CategorySchema.model_validate(category)
     cat_schema.file_count = file_count
     
     return cat_schema
@@ -105,7 +152,7 @@ async def create_category(
     - 檢查分類名稱是否重複（同處室內）
     - 自動關聯到當前使用者的處室
     """
-    # 檢查分類名稱是否重複
+    # 檢查分類名稱是否重複（同處室內）
     existing = await db.execute(
         select(Category).where(
             Category.name == category_data.name,
@@ -130,14 +177,11 @@ async def create_category(
     await activity_service.log_activity(
         db=db,
         user_id=current_user.id,
-        action="create",
-        entity_type="category",
-        entity_id=category.id,
-        description=f"建立分類: {category.name}",
-        department_id=current_user.department_id
+        activity_type="upload",
+        description=f"建立分類: {category.name}"
     )
     
-    cat_schema = CategorySchema.from_orm(category)
+    cat_schema = CategorySchema.model_validate(category)
     cat_schema.file_count = 0
     
     return cat_schema
@@ -191,11 +235,8 @@ async def update_category(
     await activity_service.log_activity(
         db=db,
         user_id=current_user.id,
-        action="update",
-        entity_type="category",
-        entity_id=category_id,
-        description=f"更新分類: {category.name}",
-        department_id=current_user.department_id
+        activity_type="update_file",
+        description=f"更新分類: {category.name}"
     )
     
     # 查詢檔案數量
@@ -203,7 +244,7 @@ async def update_category(
         select(func.count(File.id)).where(File.category_id == category_id)
     )
     
-    cat_schema = CategorySchema.from_orm(category)
+    cat_schema = CategorySchema.model_validate(category)
     cat_schema.file_count = file_count
     
     return cat_schema
@@ -253,58 +294,9 @@ async def delete_category(
     await activity_service.log_activity(
         db=db,
         user_id=current_user.id,
-        action="delete",
-        entity_type="category",
-        entity_id=category_id,
-        description=f"刪除分類: {category_name}",
-        department_id=current_user.department_id
+        activity_type="delete",
+        description=f"刪除分類: {category_name}"
     )
     
     return {"message": "分類已刪除"}
 
-
-@router.get("/stats", response_model=CategoryStatsResponse)
-async def get_category_stats(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """取得分類統計資料
-    
-    - 各分類的檔案數量
-    - 各分類的總大小
-    - 佔比百分比
-    """
-    # 查詢各分類的統計
-    query = await db.execute(
-        select(
-            Category.id,
-            Category.name,
-            Category.color,
-            func.count(File.id).label('file_count'),
-            func.coalesce(func.sum(File.file_size), 0).label('total_size')
-        )
-        .outerjoin(File, File.category_id == Category.id)
-        .where(Category.department_id == current_user.department_id)
-        .group_by(Category.id, Category.name, Category.color)
-        .order_by(desc('file_count'))
-    )
-    
-    results = query.all()
-    
-    # 計算總大小（用於計算百分比）
-    total_size = sum(row.total_size for row in results)
-    
-    # 組織結果
-    stats = []
-    for row in results:
-        percentage = (row.total_size / total_size * 100) if total_size > 0 else 0
-        stats.append(CategoryStatItem(
-            id=row.id,
-            name=row.name,
-            color=row.color,
-            file_count=row.file_count,
-            total_size=row.total_size,
-            percentage=round(percentage, 1)
-        ))
-    
-    return CategoryStatsResponse(stats=stats)

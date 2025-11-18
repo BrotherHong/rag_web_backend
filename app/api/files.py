@@ -102,10 +102,76 @@ async def get_files(
     files = result.unique().scalars().all()
     
     return FileListResponse(
-        items=[FileSchema.from_orm(f) for f in files],
+        items=[FileSchema.model_validate(f) for f in files],
         total=total,
         page=page,
         pages=math.ceil(total / limit) if total > 0 else 0
+    )
+
+
+@router.get("/statistics", response_model=FileStatsResponse)
+async def get_file_statistics(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """取得檔案統計資訊
+    
+    - 總檔案數和大小
+    - 各狀態檔案數
+    - 各類型檔案數
+    - 最近上傳的檔案
+    """
+    # 基礎查詢（自動過濾處室）
+    base_query = select(FileModel).where(
+        FileModel.department_id == current_user.department_id
+    )
+    
+    # 總檔案數
+    total_files = await db.scalar(
+        select(func.count(FileModel.id)).where(
+            FileModel.department_id == current_user.department_id
+        )
+    )
+    
+    # 總大小
+    total_size = await db.scalar(
+        select(func.sum(FileModel.file_size)).where(
+            FileModel.department_id == current_user.department_id
+        )
+    ) or 0
+    
+    # 按狀態統計
+    status_stats = await db.execute(
+        select(FileModel.status, func.count(FileModel.id))
+        .where(FileModel.department_id == current_user.department_id)
+        .group_by(FileModel.status)
+    )
+    by_status = {status: count for status, count in status_stats.all()}
+    
+    # 按類型統計
+    type_stats = await db.execute(
+        select(FileModel.file_type, func.count(FileModel.id))
+        .where(FileModel.department_id == current_user.department_id)
+        .group_by(FileModel.file_type)
+    )
+    by_type = {file_type: count for file_type, count in type_stats.all()}
+    
+    # 最近上傳的檔案（前5個）
+    recent_query = await db.execute(
+        select(FileModel)
+        .where(FileModel.department_id == current_user.department_id)
+        .options(joinedload(FileModel.category), joinedload(FileModel.uploader))
+        .order_by(desc(FileModel.created_at))
+        .limit(5)
+    )
+    recent_files = recent_query.unique().scalars().all()
+    
+    return FileStatsResponse(
+        total_files=total_files,
+        total_size=int(total_size),
+        by_status=by_status,
+        by_type=by_type,
+        recent_uploads=[FileSchema.model_validate(f) for f in recent_files]
     )
 
 
@@ -175,11 +241,9 @@ async def upload_file(
     await activity_service.log_activity(
         db=db,
         user_id=current_user.id,
-        action="upload",
-        entity_type="file",
-        entity_id=db_file.id,
+        activity_type="upload",
         description=f"上傳檔案: {file.filename}",
-        department_id=current_user.department_id
+        file_id=db_file.id
     )
     
     # 7. 觸發檔案處理（使用模擬處理器進行演示）
@@ -325,11 +389,8 @@ async def batch_upload_files(
     await activity_service.log_activity(
         db=db,
         user_id=current_user.id,
-        action="upload",
-        entity_type="file",
-        description=f"批次上傳 {len(uploaded_file_ids)} 個檔案",
-        department_id=current_user.department_id,
-        metadata={"file_ids": uploaded_file_ids}
+        activity_type="upload",
+        description=f"批次上傳 {len(uploaded_file_ids)} 個檔案"
     )
     
     # 批次處理檔案（背景任務）
@@ -386,7 +447,7 @@ async def get_file(
     if file.department_id != current_user.department_id and not current_user.is_super_admin:
         raise HTTPException(status_code=403, detail="無權限查看此檔案")
     
-    return FileDetailResponse.from_orm(file)
+    return FileDetailResponse.model_validate(file)
 
 
 @router.get("/{file_id}/processing-status")
@@ -478,11 +539,9 @@ async def update_file(
     await activity_service.log_activity(
         db=db,
         user_id=current_user.id,
-        action="update",
-        entity_type="file",
-        entity_id=file_id,
+        activity_type="update_file",
         description=f"更新檔案資訊: {file.original_filename}",
-        department_id=current_user.department_id
+        file_id=file_id
     )
     
     return {"message": "檔案資訊已更新"}
@@ -528,11 +587,9 @@ async def delete_file(
     await activity_service.log_activity(
         db=db,
         user_id=current_user.id,
-        action="delete",
-        entity_type="file",
-        entity_id=file_id,
+        activity_type="delete",
         description=f"刪除檔案: {original_filename}",
-        department_id=current_user.department_id
+        file_id=file_id
     )
     
     return {"message": "檔案已刪除"}
@@ -574,11 +631,9 @@ async def download_file(
     await activity_service.log_activity(
         db=db,
         user_id=current_user.id,
-        action="download",
-        entity_type="file",
-        entity_id=file_id,
+        activity_type="download",
         description=f"下載檔案: {file.original_filename}",
-        department_id=current_user.department_id
+        file_id=file_id
     )
     
     # 返回檔案
@@ -588,68 +643,3 @@ async def download_file(
         media_type=file.mime_type or "application/octet-stream"
     )
 
-
-@router.get("/stats", response_model=FileStatsResponse)
-async def get_file_stats(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """取得檔案統計資訊
-    
-    - 總檔案數和大小
-    - 各狀態檔案數
-    - 各類型檔案數
-    - 最近上傳的檔案
-    """
-    # 基礎查詢（自動過濾處室）
-    base_query = select(FileModel).where(
-        FileModel.department_id == current_user.department_id
-    )
-    
-    # 總檔案數
-    total_files = await db.scalar(
-        select(func.count(FileModel.id)).where(
-            FileModel.department_id == current_user.department_id
-        )
-    )
-    
-    # 總大小
-    total_size = await db.scalar(
-        select(func.sum(FileModel.file_size)).where(
-            FileModel.department_id == current_user.department_id
-        )
-    ) or 0
-    
-    # 按狀態統計
-    status_stats = await db.execute(
-        select(FileModel.status, func.count(FileModel.id))
-        .where(FileModel.department_id == current_user.department_id)
-        .group_by(FileModel.status)
-    )
-    by_status = {status: count for status, count in status_stats.all()}
-    
-    # 按類型統計
-    type_stats = await db.execute(
-        select(FileModel.file_type, func.count(FileModel.id))
-        .where(FileModel.department_id == current_user.department_id)
-        .group_by(FileModel.file_type)
-    )
-    by_type = {file_type: count for file_type, count in type_stats.all()}
-    
-    # 最近上傳的檔案（前5個）
-    recent_query = await db.execute(
-        select(FileModel)
-        .where(FileModel.department_id == current_user.department_id)
-        .options(joinedload(FileModel.category), joinedload(FileModel.uploader))
-        .order_by(desc(FileModel.created_at))
-        .limit(5)
-    )
-    recent_files = recent_query.unique().scalars().all()
-    
-    return FileStatsResponse(
-        total_files=total_files,
-        total_size=int(total_size),
-        by_status=by_status,
-        by_type=by_type,
-        recent_uploads=[FileSchema.from_orm(f) for f in recent_files]
-    )

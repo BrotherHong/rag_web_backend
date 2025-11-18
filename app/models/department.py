@@ -9,6 +9,8 @@ from app.models.base import TimestampMixin
 if TYPE_CHECKING:
     from app.models.user import User
     from app.models.file import File
+    from app.models.query_history import QueryHistory
+    from app.models.category import Category
 
 
 class Department(Base, TimestampMixin):
@@ -43,6 +45,18 @@ class Department(Base, TimestampMixin):
     
     files: Mapped[List["File"]] = relationship(
         "File",
+        back_populates="department",
+        cascade="all, delete-orphan"
+    )
+    
+    categories: Mapped[List["Category"]] = relationship(
+        "Category",
+        back_populates="department",
+        cascade="all, delete-orphan"
+    )
+    
+    query_history: Mapped[List["QueryHistory"]] = relationship(
+        "QueryHistory",
         back_populates="department",
         cascade="all, delete-orphan"
     )

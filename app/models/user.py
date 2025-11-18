@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from app.models.department import Department
     from app.models.file import File
     from app.models.activity import Activity
+    from app.models.query_history import QueryHistory
 
 
 class UserRole(str, Enum):
@@ -94,6 +95,12 @@ class User(Base, TimestampMixin):
     
     activities: Mapped[List["Activity"]] = relationship(
         "Activity",
+        back_populates="user",
+        cascade="all, delete-orphan"
+    )
+    
+    query_history: Mapped[List["QueryHistory"]] = relationship(
+        "QueryHistory",
         back_populates="user",
         cascade="all, delete-orphan"
     )

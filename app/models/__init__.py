@@ -6,6 +6,8 @@ from app.models.department import Department
 from app.models.file import File, FileStatus
 from app.models.category import Category
 from app.models.activity import Activity, ActivityType
+from app.models.query_history import QueryHistory
+from app.models.system_setting import SystemSetting
 
 __all__ = [
     "Base",
@@ -17,4 +19,6 @@ __all__ = [
     "Category",
     "Activity",
     "ActivityType",
+    "QueryHistory",
+    "SystemSetting",
 ]

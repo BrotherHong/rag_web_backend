@@ -25,7 +25,7 @@ class CategoryUpdate(BaseModel):
 class CategorySchema(CategoryBase):
     """分類資訊 Schema"""
     id: int
-    file_count: int = 0
+    file_count: Optional[int] = 0
     created_at: datetime
     
     class Config:

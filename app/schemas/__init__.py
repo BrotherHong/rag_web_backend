@@ -28,6 +28,12 @@ class UserUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 
+class PasswordChange(BaseModel):
+    """修改密碼請求"""
+    old_password: str = Field(..., min_length=6, description="舊密碼")
+    new_password: str = Field(..., min_length=6, max_length=128, description="新密碼")
+
+
 class UserResponse(UserBase):
     """使用者響應"""
     id: int
@@ -35,6 +41,27 @@ class UserResponse(UserBase):
     is_active: bool
     department_id: int
     created_at: datetime
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UserListResponse(BaseModel):
+    """使用者列表響應"""
+    items: list[UserResponse]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class UserStatsResponse(BaseModel):
+    """使用者統計響應"""
+    total_users: int = Field(..., description="總使用者數")
+    active_users: int = Field(..., description="啟用使用者數")
+    inactive_users: int = Field(..., description="停用使用者數")
+    users_by_role: dict[str, int] = Field(..., description="依角色統計")
+    users_by_department: list[dict] = Field(..., description="依處室統計")
+    recent_logins: list[dict] = Field(..., description="最近登入記錄")
     updated_at: datetime
     
     model_config = ConfigDict(from_attributes=True)
@@ -78,6 +105,12 @@ class DepartmentCreate(DepartmentBase):
     pass
 
 
+class DepartmentUpdate(BaseModel):
+    """更新處室請求"""
+    name: Optional[str] = Field(None, min_length=1, max_length=100, description="處室名稱")
+    description: Optional[str] = Field(None, description="處室描述")
+
+
 class DepartmentResponse(DepartmentBase):
     """處室響應"""
     id: int
@@ -85,6 +118,26 @@ class DepartmentResponse(DepartmentBase):
     updated_at: datetime
     
     model_config = ConfigDict(from_attributes=True)
+
+
+class DepartmentListResponse(BaseModel):
+    """處室列表響應"""
+    items: list[DepartmentResponse]
+    total: int
+    page: int
+    pages: int
+
+
+class DepartmentStatsResponse(BaseModel):
+    """處室統計響應"""
+    department_id: int = Field(..., description="處室 ID")
+    department_name: str = Field(..., description="處室名稱")
+    user_count: int = Field(..., description="使用者數量")
+    active_user_count: int = Field(..., description="啟用使用者數量")
+    file_count: int = Field(..., description="檔案數量")
+    total_file_size: int = Field(..., description="檔案總大小（bytes）")
+    activity_count: int = Field(..., description="活動記錄數量")
+    recent_activities: list[dict] = Field(..., description="最近活動")
 
 
 # ===== 通用 Schemas =====
@@ -106,16 +159,22 @@ __all__ = [
     "UserBase",
     "UserCreate",
     "UserUpdate",
+    "PasswordChange",
     "UserResponse",
+    "UserListResponse",
+    "UserStatsResponse",
     # 認證
     "Token",
     "TokenData",
     "LoginRequest",
-    "ChangePasswordRequest",
+    "LoginResponse",
     # 處室
     "DepartmentBase",
     "DepartmentCreate",
+    "DepartmentUpdate",
     "DepartmentResponse",
+    "DepartmentListResponse",
+    "DepartmentStatsResponse",
     # 通用
     "MessageResponse",
     "PaginationParams",

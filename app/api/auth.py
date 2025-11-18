@@ -24,6 +24,7 @@ from app.schemas import (
     MessageResponse,
 )
 from app.config import settings
+from app.services.activity import activity_service
 
 router = APIRouter(prefix="/auth", tags=["認證"])
 
@@ -146,15 +147,29 @@ async def change_password(
 
 
 @router.post("/logout", response_model=MessageResponse, summary="使用者登出")
-async def logout(current_user: User = Depends(get_current_user)):
+async def logout(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
     """
     使用者登出
     
-    注意：由於使用 JWT，實際的登出需要在客戶端刪除 Token
-    此端點主要用於記錄登出事件
+    - 記錄登出活動
+    - 客戶端需刪除 Token
+    
+    注意：由於使用 JWT，Token 在過期前仍然有效
+    建議客戶端立即清除 localStorage 中的 Token
     """
-    # TODO: 可以在這裡記錄登出活動到 Activity 表
+    # 記錄登出活動
+    from app.services.activity import activity_service
+    await activity_service.log_activity(
+        db=db,
+        user_id=current_user.id,
+        activity_type="logout",
+        description=f"{current_user.username} 登出系統"
+    )
+    
     return MessageResponse(
         message="登出成功",
-        detail="請在客戶端刪除 Token"
+        detail="已記錄登出事件，請在客戶端刪除 Token"
     )
