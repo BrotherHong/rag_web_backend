@@ -2,26 +2,31 @@
 
 ## 開發環境 vs 生產環境
 
-### 📍 目前（開發環境）
+### 📍 開發環境(推薦日常開發)
 
 ```bash
-# 1. 啟動資料庫
+# 1. 啟動資料庫服務(PostgreSQL, Redis)
 docker-compose up -d
 
 # 2. 啟動虛擬環境
 .\venv\Scripts\activate  # Windows
 source venv/bin/activate  # Linux/Mac
 
-# 3. 啟動 FastAPI
+# 3. 初始化資料庫(僅首次)
+python scripts/init_db.py
+python scripts/init_system_settings.py
+
+# 4. 啟動 FastAPI(支援熱重載)
 uvicorn app.main:app --reload
 ```
 
-**訪問：**
-- http://localhost:8000/api/docs
+**訪問:**
+- API 文件: http://localhost:8000/docs
+- 預設管理員: admin / admin123
 
 ---
 
-### 🚀 未來（生產環境）
+### 🚀 生產環境(正式部署)
 
 #### **Linux/Mac:**
 ```bash
@@ -39,26 +44,27 @@ deploy.bat
 ```bash
 # 1. 設定環境變數
 cp .env.example .env
-nano .env  # 填入生產設定
+nano .env  # 填入生產設定(強密碼、金鑰)
 
-# 2. 啟動所有服務（包含 FastAPI）
+# 2. 啟動所有服務(包含 FastAPI)
 docker-compose -f docker-compose.prod.yml up -d --build
 
 # 3. 執行資料庫遷移
 docker-compose -f docker-compose.prod.yml exec backend alembic upgrade head
 
-# 4. 初始化資料（僅首次）
+# 4. 初始化資料(僅首次)
 docker-compose -f docker-compose.prod.yml exec backend python scripts/init_db.py
+docker-compose -f docker-compose.prod.yml exec backend python scripts/init_system_settings.py
 ```
 
-**訪問：**
-- http://你的伺服器IP:8000/api/docs
+**訪問:**
+- http://你的伺服器IP:8000/docs
 
 ---
 
 ## 📦 Git 部署流程
 
-### 1️⃣ 初次設定（開發電腦）
+### 1️⃣ 初次設定(開發電腦)
 
 ```bash
 # 初始化 Git

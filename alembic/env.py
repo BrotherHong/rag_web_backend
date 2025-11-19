@@ -23,9 +23,8 @@ from app.models import *  # 匯入所有模型以支援 autogenerate
 # access to the values within the .ini file in use.
 config = context.config
 
-# 設定資料庫 URL
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace(
-    "postgresql+asyncpg://", "postgresql+psycopg://"))
+# 設定資料庫 URL - 直接使用 asyncpg
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.

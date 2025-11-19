@@ -1,6 +1,6 @@
 """分類管理相關的 Pydantic Schemas"""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional
 from datetime import datetime
 
@@ -8,7 +8,7 @@ from datetime import datetime
 class CategoryBase(BaseModel):
     """分類基礎 Schema"""
     name: str = Field(..., min_length=1, max_length=100, description="分類名稱")
-    color: str = Field(default="blue", description="分類顏色")
+    color: str = Field(default="#3B82F6", description="分類顏色 (hex格式)")
 
 
 class CategoryCreate(CategoryBase):
@@ -25,11 +25,14 @@ class CategoryUpdate(BaseModel):
 class CategorySchema(CategoryBase):
     """分類資訊 Schema"""
     id: int
-    file_count: Optional[int] = 0
-    created_at: datetime
+    file_count: Optional[int] = Field(default=0, serialization_alias="fileCount")
+    created_at: datetime = Field(serialization_alias="createdAt")
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(
+        from_attributes=True,
+        populate_by_name=True,
+        by_alias=True
+    )
 
 
 class CategoryListResponse(BaseModel):
@@ -42,8 +45,8 @@ class CategoryStatItem(BaseModel):
     id: int
     name: str
     color: str
-    file_count: int
-    total_size: int
+    file_count: int = Field(serialization_alias="fileCount")
+    total_size: int = Field(serialization_alias="totalSize")
     percentage: float
 
 

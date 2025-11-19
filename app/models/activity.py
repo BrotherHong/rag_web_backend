@@ -10,22 +10,32 @@ from app.models.base import TimestampMixin
 if TYPE_CHECKING:
     from app.models.user import User
     from app.models.file import File
+    from app.models.department import Department
 
 
 class ActivityType(str, Enum):
     """活動類型"""
-    LOGIN = "login"                # 登入
-    LOGOUT = "logout"              # 登出
-    UPLOAD = "upload"              # 上傳檔案
-    DOWNLOAD = "download"          # 下載檔案
-    DELETE = "delete"              # 刪除檔案
-    SEARCH = "search"              # 搜尋
-    QUERY = "query"                # RAG 查詢
-    UPDATE_PROFILE = "update_profile"  # 更新個人資料
-    UPDATE_FILE = "update_file"    # 更新檔案資訊
-    CREATE_USER = "create_user"    # 建立使用者
-    UPDATE_USER = "update_user"    # 更新使用者
-    DELETE_USER = "delete_user"    # 刪除使用者
+    LOGIN = "LOGIN"                # 登入
+    LOGOUT = "LOGOUT"              # 登出
+    UPLOAD = "UPLOAD"              # 上傳檔案
+    DOWNLOAD = "DOWNLOAD"          # 下載檔案
+    DELETE = "DELETE"              # 刪除檔案
+    SEARCH = "SEARCH"              # 搜尋
+    QUERY = "QUERY"                # RAG 查詢
+    UPDATE_PROFILE = "UPDATE_PROFILE"  # 更新個人資料
+    UPDATE_FILE = "UPDATE_FILE"    # 更新檔案資訊
+    CREATE_USER = "CREATE_USER"    # 建立使用者
+    UPDATE_USER = "UPDATE_USER"    # 更新使用者
+    DELETE_USER = "DELETE_USER"    # 刪除使用者
+    CREATE_DEPARTMENT = "CREATE_DEPARTMENT"  # 建立處室
+    UPDATE_DEPARTMENT = "UPDATE_DEPARTMENT"  # 更新處室
+    DELETE_DEPARTMENT = "DELETE_DEPARTMENT"  # 刪除處室
+    CREATE_CATEGORY = "CREATE_CATEGORY"  # 建立分類
+    UPDATE_CATEGORY = "UPDATE_CATEGORY"  # 更新分類
+    DELETE_CATEGORY = "DELETE_CATEGORY"  # 刪除分類
+    CREATE_SETTING = "CREATE_SETTING"  # 建立系統設定
+    UPDATE_SETTING = "UPDATE_SETTING"  # 更新系統設定
+    DELETE_SETTING = "DELETE_SETTING"  # 刪除系統設定
 
 
 class Activity(Base, TimestampMixin):
@@ -73,7 +83,7 @@ class Activity(Base, TimestampMixin):
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
-        comment="使用者 ID"
+        comment="使用者 ID (實際操作者)"
     )
     
     file_id: Mapped[int | None] = mapped_column(
@@ -81,6 +91,13 @@ class Activity(Base, TimestampMixin):
         nullable=True,
         index=True,
         comment="關聯檔案 ID"
+    )
+    
+    department_id: Mapped[int | None] = mapped_column(
+        ForeignKey("departments.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="關聯處室 ID (活動發生的處室,用於代理模式)"
     )
     
     # 關聯
@@ -91,6 +108,11 @@ class Activity(Base, TimestampMixin):
     
     file: Mapped["File"] = relationship(
         "File",
+        back_populates="activities"
+    )
+    
+    department: Mapped["Department"] = relationship(
+        "Department",
         back_populates="activities"
     )
     

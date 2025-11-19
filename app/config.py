@@ -1,6 +1,6 @@
 """應用程式配置管理"""
 
-from typing import List
+from typing import List, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,7 +13,6 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/api"
     
     # 安全設定
-    SECRET_KEY: str
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 1440  # 24 hours
@@ -23,37 +22,22 @@ class Settings(BaseSettings):
     DB_POOL_SIZE: int = 20
     DB_MAX_OVERFLOW: int = 40
     
-    # Redis
-    REDIS_URL: str
-    REDIS_CACHE_TTL: int = 3600
+    # Redis (可選)
+    REDIS_URL: Optional[str] = None
     
-    # OpenAI
-    OPENAI_API_KEY: str = ""
-    OPENAI_MODEL: str = "gpt-4"
-    OPENAI_EMBEDDING_MODEL: str = "text-embedding-ada-002"
-    
-    # Qdrant
-    QDRANT_URL: str
-    QDRANT_API_KEY: str = ""
-    QDRANT_COLLECTION: str = "rag_documents"
-    EMBEDDING_DIM: int = 1536  # OpenAI text-embedding-ada-002 維度
-    
-    # 檔案上傳
-    MAX_FILE_SIZE: int = 52428800  # 50MB
-    ALLOWED_EXTENSIONS: str = ".pdf,.docx,.txt"
-    UPLOAD_DIR: str = "./uploads"
+    # 檔案上傳（預設值，實際使用資料庫系統設定）
+    MAX_FILE_SIZE: int = 52428800  # 50MB - 作為預設值/備援
+    ALLOWED_EXTENSIONS: str = ".pdf,.docx,.txt"  # 作為預設值/備援
+    UPLOAD_DIR: str = "./uploads"  # 實際儲存路徑
     
     # CORS
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
     
-    # Celery
-    CELERY_BROKER_URL: str = ""
-    CELERY_RESULT_BACKEND: str = ""
-    
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        case_sensitive=True
+        case_sensitive=True,
+        extra="ignore"  # 忽略額外的環境變數（向後兼容）
     )
     
     @property

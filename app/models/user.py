@@ -16,9 +16,9 @@ if TYPE_CHECKING:
 
 class UserRole(str, Enum):
     """使用者角色"""
-    ADMIN = "admin"          # 系統管理員
-    DEPT_ADMIN = "dept_admin"  # 處室管理員
-    USER = "user"            # 一般使用者
+    SUPER_ADMIN = "SUPER_ADMIN"  # 系統管理員（最高權限）
+    ADMIN = "ADMIN"              # 處室管理員
+    USER = "USER"                # 一般使用者
 
 
 class User(Base, TimestampMixin):
@@ -74,11 +74,11 @@ class User(Base, TimestampMixin):
     )
     
     # 外鍵
-    department_id: Mapped[int] = mapped_column(
+    department_id: Mapped[int | None] = mapped_column(
         ForeignKey("departments.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
-        comment="所屬處室 ID"
+        comment="所屬處室 ID（super_admin 可為 NULL）"
     )
     
     # 關聯

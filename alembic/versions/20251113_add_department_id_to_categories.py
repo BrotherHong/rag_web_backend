@@ -20,18 +20,12 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     # 添加 color 欄位（如果不存在）
-    op.add_column('categories', sa.Column('color', sa.String(length=20), nullable=False, server_default='blue', comment='分類顏色'))
+    op.add_column('categories', sa.Column('color', sa.String(length=20), nullable=False, server_default='#3B82F6', comment='分類顏色'))
     
-    # 添加 department_id 欄位（先允許 NULL）
+    # 添加 department_id 欄位（允許 NULL，因為可能還沒有 department 資料）
     op.add_column('categories', sa.Column('department_id', sa.Integer(), nullable=True, comment='處室 ID'))
     
-    # 為現有的分類設定 department_id（假設 department 1 存在）
-    op.execute("UPDATE categories SET department_id = 1 WHERE department_id IS NULL")
-    
-    # 現在將 department_id 設為 NOT NULL
-    op.alter_column('categories', 'department_id', nullable=False)
-    
-    # 添加外鍵約束
+    # 添加外鍵約束（允許 NULL）
     op.create_foreign_key(
         'fk_categories_department_id',
         'categories', 'departments',
@@ -41,12 +35,6 @@ def upgrade() -> None:
     
     # 添加索引
     op.create_index('ix_categories_department_id', 'categories', ['department_id'])
-    
-    # 移除 unique 約束（如果存在）- 因為現在同名分類可以在不同處室
-    try:
-        op.drop_constraint('categories_name_key', 'categories', type_='unique')
-    except:
-        pass  # 如果約束不存在，忽略錯誤
 
 
 def downgrade() -> None:
@@ -59,6 +47,3 @@ def downgrade() -> None:
     # 移除欄位
     op.drop_column('categories', 'department_id')
     op.drop_column('categories', 'color')
-    
-    # 恢復 unique 約束
-    op.create_unique_constraint('categories_name_key', 'categories', ['name'])

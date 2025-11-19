@@ -36,7 +36,7 @@ async def get_activities(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """取得活動記錄列表
+    """取得活動記錄列表（當前處室）
     
     - 支援分頁
     - 支援多種篩選條件
@@ -47,15 +47,18 @@ async def get_activities(
     # 建立基礎查詢
     query = select(Activity).options(
         joinedload(Activity.user),
-        joinedload(Activity.file)
+        joinedload(Activity.file),
+        joinedload(Activity.department)
     )
     
-    # 處室隔離：一般使用者只能看自己處室的活動
+    # 處室隔離：
+    # 1. 非系統管理員只能看自己處室的活動
+    # 2. 系統管理員在代理模式下（有 department_id）也只能看代理處室的活動
     from app.models.user import UserRole
-    if current_user.role != UserRole.ADMIN:
-        # 需要 join user 表來過濾處室
-        query = query.join(Activity.user).where(
-            User.department_id == current_user.department_id
+    if current_user.role != UserRole.SUPER_ADMIN or current_user.department_id is not None:
+        # 使用 Activity.department_id 過濾
+        query = query.where(
+            Activity.department_id == current_user.department_id
         )
     
     # 活動類型篩選
@@ -109,7 +112,9 @@ async def get_activities(
             file_id=activity.file_id,
             file_name=activity.file.original_filename if activity.file else None,
             ip_address=activity.ip_address,
-            created_at=activity.created_at
+            created_at=activity.created_at,
+            department_id=activity.department_id,
+            department_name=activity.department.name if activity.department else None
         ))
     
     return ActivityListResponse(
@@ -120,148 +125,68 @@ async def get_activities(
     )
 
 
-@router.get("/{activity_id}", response_model=ActivityDetail)
-async def get_activity_detail(
-    activity_id: int,
+@router.get("/all", response_model=ActivityListResponse)
+async def get_all_activities(
+    page: int = Query(1, ge=1, description="頁碼"),
+    limit: int = Query(50, ge=1, le=100, description="每頁數量"),
+    departmentId: Optional[int] = Query(None, description="處室ID篩選"),
+    activity_type: Optional[str] = Query(None, description="活動類型篩選"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """取得活動記錄詳情
+    """取得所有處室的活動記錄（僅管理員）
     
-    - 包含完整的活動資訊
-    - 包含關聯的使用者和檔案資訊
-    - 權限檢查
+    前端期望此端點用於超級管理員查看所有處室活動
+    - 需要管理員權限
+    - 可選擇性篩選特定處室
+    - 支援分頁
     """
+    from app.models.user import UserRole
     
-    # 查詢活動記錄
-    query = select(Activity).where(Activity.id == activity_id).options(
+    # 權限檢查：只有非代理模式的系統管理員可以使用此端點
+    if current_user.role != UserRole.SUPER_ADMIN or current_user.department_id is not None:
+        raise HTTPException(
+            status_code=403,
+            detail="需要系統管理員權限，且不能在代理模式下使用"
+        )
+    
+    # 建立基礎查詢
+    query = select(Activity).options(
         joinedload(Activity.user),
-        joinedload(Activity.file)
+        joinedload(Activity.file),
+        joinedload(Activity.department)
     )
     
+    # 處室篩選（如果提供）
+    if departmentId is not None:
+        query = query.where(
+            Activity.department_id == departmentId
+        )
+    
+    # 活動類型篩選
+    if activity_type:
+        try:
+            type_enum = ActivityType(activity_type)
+            query = query.where(Activity.activity_type == type_enum)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="無效的活動類型")
+    
+    # 計算總數
+    count_query = select(func.count()).select_from(query.subquery())
+    total = await db.scalar(count_query)
+    
+    # 排序和分頁
+    query = query.order_by(desc(Activity.created_at))
+    query = query.offset((page - 1) * limit).limit(limit)
+    
+    # 執行查詢
     result = await db.execute(query)
-    activity = result.scalar_one_or_none()
+    activities = result.scalars().all()
     
-    if not activity:
-        raise HTTPException(status_code=404, detail="活動記錄不存在")
-    
-    # 權限檢查：一般使用者只能查看自己處室的活動
-    from app.models.user import UserRole
-    if current_user.role != UserRole.ADMIN:
-        if activity.user.department_id != current_user.department_id:
-            raise HTTPException(status_code=403, detail="無權限查看此活動記錄")
-    
-    # 構建回應
-    response = ActivityDetail.model_validate(activity)
-    
-    # 添加關聯資訊
-    if activity.user:
-        response.user = {
-            "id": activity.user.id,
-            "username": activity.user.username,
-            "full_name": activity.user.full_name,
-            "email": activity.user.email
-        }
-    
-    if activity.file:
-        response.file = {
-            "id": activity.file.id,
-            "filename": activity.file.original_filename,
-            "file_type": activity.file.file_type,
-            "file_size": activity.file.file_size
-        }
-    
-    return response
-
-
-@router.get("/stats/summary", response_model=ActivityStatsResponse)
-async def get_activity_stats(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """取得活動統計
-    
-    - 各種時間範圍的統計
-    - 依活動類型統計
-    - 依使用者統計
-    - 最近活動列表
-    """
-    
-    # 基礎查詢（處室隔離）
-    from app.models.user import UserRole
-    base_query = select(Activity).join(Activity.user)
-    
-    if current_user.role != UserRole.ADMIN:
-        base_query = base_query.where(User.department_id == current_user.department_id)
-    
-    # 1. 總活動數
-    total_query = select(func.count()).select_from(base_query.subquery())
-    total_activities = await db.scalar(total_query) or 0
-    
-    # 2. 今日活動數
-    today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    today_query = select(func.count()).select_from(
-        base_query.where(Activity.created_at >= today_start).subquery()
-    )
-    activities_today = await db.scalar(today_query) or 0
-    
-    # 3. 本週活動數
-    week_start = today_start - timedelta(days=today_start.weekday())
-    week_query = select(func.count()).select_from(
-        base_query.where(Activity.created_at >= week_start).subquery()
-    )
-    activities_this_week = await db.scalar(week_query) or 0
-    
-    # 4. 本月活動數
-    month_start = today_start.replace(day=1)
-    month_query = select(func.count()).select_from(
-        base_query.where(Activity.created_at >= month_start).subquery()
-    )
-    activities_this_month = await db.scalar(month_query) or 0
-    
-    # 5. 依活動類型統計
-    type_query = select(
-        Activity.activity_type,
-        func.count(Activity.id).label('count')
-    ).select_from(base_query.subquery()).group_by(Activity.activity_type)
-    
-    type_result = await db.execute(type_query)
-    by_type = {row[0].value: row[1] for row in type_result.all()}
-    
-    # 6. 依使用者統計（前10）
-    user_query = select(
-        User.id,
-        User.username,
-        User.full_name,
-        func.count(Activity.id).label('activity_count')
-    ).select_from(
-        base_query.subquery()
-    ).join(User, Activity.user_id == User.id).group_by(
-        User.id, User.username, User.full_name
-    ).order_by(desc('activity_count')).limit(10)
-    
-    user_result = await db.execute(user_query)
-    by_user = [
-        {
-            "user_id": row[0],
-            "username": row[1],
-            "full_name": row[2],
-            "activity_count": row[3]
-        }
-        for row in user_result.all()
-    ]
-    
-    # 7. 最近活動（前10）
-    recent_query = base_query.options(
-        joinedload(Activity.user),
-        joinedload(Activity.file)
-    ).order_by(desc(Activity.created_at)).limit(10)
-    
-    recent_result = await db.execute(recent_query)
-    recent_activities_data = recent_result.scalars().all()
-    
-    recent_activities = [
-        ActivityListItem(
+    # 轉換為回應格式
+    items = []
+    for activity in activities:
+        items.append(ActivityListItem(
             id=activity.id,
             activity_type=activity.activity_type.value,
             description=activity.description,
@@ -271,17 +196,15 @@ async def get_activity_stats(
             file_id=activity.file_id,
             file_name=activity.file.original_filename if activity.file else None,
             ip_address=activity.ip_address,
-            created_at=activity.created_at
-        )
-        for activity in recent_activities_data
-    ]
+            created_at=activity.created_at,
+            department_id=activity.department_id,
+            department_name=activity.department.name if activity.department else None
+        ))
     
-    return ActivityStatsResponse(
-        total_activities=total_activities,
-        activities_today=activities_today,
-        activities_this_week=activities_this_week,
-        activities_this_month=activities_this_month,
-        by_type=by_type,
-        by_user=by_user,
-        recent_activities=recent_activities
+    return ActivityListResponse(
+        items=items,
+        total=total or 0,
+        page=page,
+        pages=math.ceil(total / limit) if total and total > 0 else 0
     )
+

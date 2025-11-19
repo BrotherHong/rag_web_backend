@@ -191,7 +191,7 @@ async def upload_file(
     - 儲存到處室專屬目錄
     """
     # 1. 驗證檔案
-    is_valid, error_msg = file_storage.validate_file(file)
+    is_valid, error_msg = await file_storage.validate_file(file, db)
     if not is_valid:
         raise HTTPException(status_code=400, detail=error_msg)
     
@@ -241,9 +241,10 @@ async def upload_file(
     await activity_service.log_activity(
         db=db,
         user_id=current_user.id,
-        activity_type="upload",
+        activity_type="UPLOAD",
         description=f"上傳檔案: {file.filename}",
-        file_id=db_file.id
+        file_id=db_file.id,
+        department_id=current_user.department_id
     )
     
     # 7. 觸發檔案處理（使用模擬處理器進行演示）
@@ -300,6 +301,7 @@ async def upload_file(
 
 
 @router.post("/batch-upload")
+@router.post("/upload/batch")  # 添加別名以支援前端路徑
 async def batch_upload_files(
     files: List[UploadFile] = File(..., description="上傳的多個檔案"),
     category_id: Optional[int] = Form(None, description="分類ID"),
@@ -313,6 +315,7 @@ async def batch_upload_files(
     - 所有檔案使用相同的分類和描述
     - 返回每個檔案的上傳結果
     - 部分失敗不影響其他檔案
+    - 前端可使用 /files/batch-upload 或 /upload/batch
     """
     if len(files) > 10:
         raise HTTPException(status_code=400, detail="一次最多上傳 10 個檔案")
@@ -332,7 +335,7 @@ async def batch_upload_files(
     for file in files:
         try:
             # 1. 驗證檔案
-            is_valid, error_msg = file_storage.validate_file(file)
+            is_valid, error_msg = await file_storage.validate_file(file, db)
             if not is_valid:
                 results.append({
                     "filename": file.filename,
@@ -389,8 +392,9 @@ async def batch_upload_files(
     await activity_service.log_activity(
         db=db,
         user_id=current_user.id,
-        activity_type="upload",
-        description=f"批次上傳 {len(uploaded_file_ids)} 個檔案"
+        activity_type="UPLOAD",
+        description=f"批次上傳 {len(uploaded_file_ids)} 個檔案",
+        department_id=current_user.department_id
     )
     
     # 批次處理檔案（背景任務）
@@ -539,9 +543,10 @@ async def update_file(
     await activity_service.log_activity(
         db=db,
         user_id=current_user.id,
-        activity_type="update_file",
+        activity_type="UPDATE_FILE",
         description=f"更新檔案資訊: {file.original_filename}",
-        file_id=file_id
+        file_id=file_id,
+        department_id=current_user.department_id
     )
     
     return {"message": "檔案資訊已更新"}
@@ -568,14 +573,6 @@ async def delete_file(
     if file.department_id != current_user.department_id:
         raise HTTPException(status_code=403, detail="無權限刪除此檔案")
     
-    # 刪除實體檔案
-    if os.path.exists(file.file_path):
-        file_storage.delete_file(file.file_path)
-    
-    # TODO: 刪除 Qdrant 向量
-    # if file.is_vectorized:
-    #     await qdrant_service.delete_vectors(file_id)
-    
     # 記錄檔名（刪除前）
     original_filename = file.original_filename
     
@@ -583,16 +580,29 @@ async def delete_file(
     await db.delete(file)
     await db.commit()
     
-    # 記錄活動
+    # 記錄活動（在刪除後，不關聯 file_id）
     await activity_service.log_activity(
         db=db,
         user_id=current_user.id,
-        activity_type="delete",
+        activity_type="DELETE",
         description=f"刪除檔案: {original_filename}",
-        file_id=file_id
+        department_id=current_user.department_id
+        # 不傳遞 file_id，因為檔案已被刪除
     )
+    await db.commit()  # 提交活動記錄
     
-    return {"message": "檔案已刪除"}
+    # 刪除實體檔案
+    if os.path.exists(file.file_path):
+        try:
+            file_storage.delete_file(file.file_path)
+        except Exception as e:
+            print(f"刪除實體檔案失敗: {str(e)}")
+    
+    # TODO: 刪除 Qdrant 向量
+    # if file.is_vectorized:
+    #     await qdrant_service.delete_vectors(file_id)
+    
+    return {"success": True, "message": "檔案已刪除"}
 
 
 @router.get("/{file_id}/download")
@@ -622,19 +632,16 @@ async def download_file(
     if not os.path.exists(file.file_path):
         raise HTTPException(status_code=404, detail="檔案實體不存在")
     
-    # 更新下載次數和最後存取時間
-    file.download_count += 1
-    file.last_accessed = datetime.now()
-    await db.commit()
-    
     # 記錄活動
     await activity_service.log_activity(
         db=db,
         user_id=current_user.id,
-        activity_type="download",
+        activity_type="DOWNLOAD",
         description=f"下載檔案: {file.original_filename}",
-        file_id=file_id
+        file_id=file_id,
+        department_id=current_user.department_id
     )
+    await db.commit()  # 提交活動記錄
     
     # 返回檔案
     return FileResponse(

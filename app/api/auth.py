@@ -29,7 +29,7 @@ from app.services.activity import activity_service
 router = APIRouter(prefix="/auth", tags=["認證"])
 
 
-@router.post("/login", response_model=Token, summary="使用者登入")
+@router.post("/login", summary="使用者登入")
 async def login(
     login_data: LoginRequest,
     db: AsyncSession = Depends(get_db)
@@ -40,7 +40,7 @@ async def login(
     - **username**: 使用者名稱
     - **password**: 密碼
     
-    返回 JWT Access Token
+    返回 JWT Token 和使用者資訊（前端期望格式）
     """
     user = await authenticate_user(db, login_data.username, login_data.password)
     
@@ -64,7 +64,35 @@ async def login(
         expires_delta=access_token_expires
     )
     
-    return Token(access_token=access_token, token_type="bearer")
+    # 記錄登入活動
+    await activity_service.log_activity(
+        db=db,
+        user_id=user.id,
+        activity_type="LOGIN",
+        description=f"使用者 {user.username} 登入系統",
+        department_id=user.department_id
+    )
+    await db.commit()
+    
+    # 返回前端期望的格式: { token, user }
+    return {
+        "token": access_token,
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "name": user.full_name,
+            "fullName": user.full_name,
+            "email": user.email,
+            "role": user.role.value,
+            "isSuperAdmin": user.role.value == "SUPER_ADMIN",
+            "departmentId": user.department.id if user.department else None,
+            "departmentName": user.department.name if user.department else None,
+            "department": {
+                "id": user.department.id if user.department else None,
+                "name": user.department.name if user.department else None
+            } if user.department else None
+        }
+    }
 
 
 @router.post("/token", response_model=Token, summary="OAuth2 密碼流登入")
@@ -116,6 +144,32 @@ async def get_current_user_info(
     return current_user
 
 
+@router.get("/verify", summary="驗證 Token 有效性")
+async def verify_token(
+    current_user: User = Depends(get_current_user)
+):
+    """
+    驗證 JWT Token 是否有效
+    
+    前端使用此端點檢查 Token 有效性
+    返回格式: { success: true, user: {...} }
+    """
+    return {
+        "success": True,
+        "user": {
+            "id": current_user.id,
+            "username": current_user.username,
+            "name": current_user.full_name,
+            "email": current_user.email,
+            "role": current_user.role.value,
+            "isSuperAdmin": current_user.role.value == "SUPER_ADMIN",
+            "departmentId": current_user.department_id,
+            "departmentName": current_user.department.name if current_user.department else None
+        },
+        "message": "Token 有效"
+    }
+
+
 @router.post("/change-password", response_model=MessageResponse, summary="修改密碼")
 async def change_password(
     password_data: ChangePasswordRequest,
@@ -165,9 +219,11 @@ async def logout(
     await activity_service.log_activity(
         db=db,
         user_id=current_user.id,
-        activity_type="logout",
-        description=f"{current_user.username} 登出系統"
+        activity_type="LOGOUT",
+        description=f"{current_user.username} 登出系統",
+        department_id=current_user.department_id
     )
+    await db.commit()
     
     return MessageResponse(
         message="登出成功",

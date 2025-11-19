@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.security import get_current_user, require_role
-from app.models import Activity, Department, File, User, UserRole
+from app.models import Activity, ActivityType, Category, Department, File, User, UserRole
 from app.schemas import (
     DepartmentCreate,
     DepartmentListResponse,
@@ -63,11 +63,37 @@ async def list_departments(
     result = await db.execute(query)
     departments = result.scalars().all()
     
+    # 為每個處室添加統計資訊
+    dept_list = []
+    for dept in departments:
+        # 計算使用者數量
+        user_count = await db.scalar(
+            select(func.count()).where(User.department_id == dept.id)
+        ) or 0
+        
+        # 計算檔案數量
+        file_count = await db.scalar(
+            select(func.count()).where(File.department_id == dept.id)
+        ) or 0
+        
+        # 創建響應物件
+        dept_dict = {
+            "id": dept.id,
+            "name": dept.name,
+            "description": dept.description,
+            "color": dept.color,
+            "user_count": user_count,
+            "file_count": file_count,
+            "created_at": dept.created_at,
+            "updated_at": dept.updated_at
+        }
+        dept_list.append(dept_dict)
+    
     # 計算總頁數
     pages = math.ceil(total / limit) if total > 0 else 1
     
     return DepartmentListResponse(
-        items=departments,
+        items=dept_list,
         total=total,
         page=page,
         pages=pages
@@ -101,7 +127,7 @@ async def get_department(
     response_model=DepartmentResponse,
     status_code=status.HTTP_201_CREATED,
     summary="建立處室",
-    dependencies=[Depends(require_role(UserRole.ADMIN))]
+    dependencies=[Depends(require_role(UserRole.SUPER_ADMIN))]
 )
 async def create_department(
     department_data: DepartmentCreate,
@@ -127,17 +153,28 @@ async def create_department(
     # 建立處室
     department = Department(**department_data.model_dump())
     db.add(department)
-    await db.commit()
-    await db.refresh(department)
+    await db.flush()  # 先 flush 以取得 department.id
+    
+    # 自動建立"未分類"分類
+    default_category = Category(
+        name="未分類",
+        description="尚未分類的檔案",
+        color="#6B7280",  # 灰色
+        department_id=department.id
+    )
+    db.add(default_category)
     
     # 記錄活動
     await activity_service.log_activity(
         db=db,
         user_id=current_user.id,
-        activity_type="create",
-        description=f"建立處室: {department.name}"
+        activity_type="CREATE_DEPARTMENT",
+        description=f"建立處室: {department.name}",
+        department_id=department.id
     )
+    
     await db.commit()
+    await db.refresh(department)
     
     return department
 
@@ -146,7 +183,7 @@ async def create_department(
     "/{department_id}",
     response_model=DepartmentResponse,
     summary="更新處室",
-    dependencies=[Depends(require_role(UserRole.ADMIN))]
+    dependencies=[Depends(require_role(UserRole.SUPER_ADMIN))]
 )
 async def update_department(
     department_id: int,
@@ -192,17 +229,17 @@ async def update_department(
     for field, value in update_data.items():
         setattr(department, field, value)
     
-    await db.commit()
-    await db.refresh(department)
-    
     # 記錄活動
     await activity_service.log_activity(
         db=db,
         user_id=current_user.id,
-        activity_type="update",
-        description=f"更新處室: {department.name}"
+        activity_type=ActivityType.UPDATE_DEPARTMENT,
+        description=f"更新處室: {department.name}",
+        department_id=department.id
     )
+    
     await db.commit()
+    await db.refresh(department)
     
     return department
 
@@ -211,7 +248,7 @@ async def update_department(
     "/{department_id}",
     response_model=MessageResponse,
     summary="刪除處室",
-    dependencies=[Depends(require_role(UserRole.ADMIN))]
+    dependencies=[Depends(require_role(UserRole.SUPER_ADMIN))]
 )
 async def delete_department(
     department_id: int,
@@ -248,17 +285,19 @@ async def delete_department(
             detail=f"無法刪除處室，該處室仍存在 {user_count} 位使用者"
         )
     
+    # 記錄處室名稱（刪除前）
     department_name = department.name
-    await db.delete(department)
-    await db.commit()
     
     # 記錄活動
     await activity_service.log_activity(
         db=db,
         user_id=current_user.id,
-        activity_type="delete",
-        description=f"刪除處室: {department_name}"
+        activity_type=ActivityType.DELETE_DEPARTMENT,
+        description=f"刪除處室: {department_name}",
+        department_id=department.id
     )
+    
+    await db.delete(department)
     await db.commit()
     
     return MessageResponse(
@@ -310,17 +349,13 @@ async def get_department_stats(
     file_size_query = select(func.sum(File.file_size)).where(File.department_id == department_id)
     total_file_size = await db.scalar(file_size_query) or 0
     
-    # 3. 活動記錄統計(通過 user 連接取得)
-    activity_count_query = select(func.count()).select_from(
-        Activity
-    ).join(
-        User, Activity.user_id == User.id
-    ).where(
-        User.department_id == department_id
+    # 3. 活動記錄統計(使用 Activity.department_id 過濾)
+    activity_count_query = select(func.count()).where(
+        Activity.department_id == department_id
     )
     activity_count = await db.scalar(activity_count_query) or 0
     
-    # 4. 最近活動(最新 10 筆)
+    # 4. 最近活動(最新 10 筆，使用 Activity.department_id 過濾)
     recent_activities_query = select(
         Activity.id,
         Activity.activity_type,
@@ -328,7 +363,7 @@ async def get_department_stats(
         Activity.created_at,
         User.username
     ).join(User, Activity.user_id == User.id).where(
-        User.department_id == department_id
+        Activity.department_id == department_id
     ).order_by(desc(Activity.created_at)).limit(10)
     
     result = await db.execute(recent_activities_query)

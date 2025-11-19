@@ -92,6 +92,37 @@ class RAGSettings(BaseModel):
     chunk_size: int = Field(500, ge=100, le=2000, description="文檔分塊大小")
     chunk_overlap: int = Field(50, ge=0, le=500, description="分塊重疊大小")
     embedding_model: str = Field("text-embedding-ada-002", description="嵌入模型")
+    tone: str = Field("professional", description="回應風格")
+    
+    # 可用選項定義（前端下拉選單會用到）- 物件陣列格式
+    available_models: list[dict[str, str]] = Field(
+        [
+            {"value": "gpt-4", "label": "GPT-4"},
+            {"value": "gpt-3.5-turbo", "label": "GPT-3.5 Turbo"},
+            {"value": "claude-3", "label": "Claude 3"},
+            {"value": "llama-2", "label": "Llama 2"}
+        ],
+        description="可用的 AI 模型選項"
+    )
+    available_tones: list[dict[str, str]] = Field(
+        [
+            {"value": "professional", "label": "專業 (Professional)"},
+            {"value": "friendly", "label": "友善 (Friendly)"},
+            {"value": "casual", "label": "隨意 (Casual)"},
+            {"value": "formal", "label": "正式 (Formal)"}
+        ],
+        description="可用的回應風格選項"
+    )
+    index_update_frequency: str = Field("realtime", description="索引更新頻率")
+    available_index_frequencies: list[dict[str, str]] = Field(
+        [
+            {"value": "realtime", "label": "即時更新"},
+            {"value": "hourly", "label": "每小時"},
+            {"value": "daily", "label": "每日"},
+            {"value": "weekly", "label": "每週"}
+        ],
+        description="可用的索引更新頻率選項"
+    )
 
 
 class SecuritySettings(BaseModel):
@@ -110,3 +141,17 @@ class FeatureSettings(BaseModel):
     enable_activity_log: bool = Field(True, description="啟用活動記錄")
     enable_email_notification: bool = Field(False, description="啟用郵件通知")
     enable_websocket: bool = Field(False, description="啟用 WebSocket")
+
+
+class BackupSettings(BaseModel):
+    """備份設定"""
+    auto_backup: bool = Field(False, description="自動備份")
+    backup_frequency: str = Field("daily", description="備份頻率")
+    available_backup_frequencies: list[dict[str, str]] = Field(
+        [
+            {"value": "daily", "label": "每日"},
+            {"value": "weekly", "label": "每週"},
+            {"value": "monthly", "label": "每月"}
+        ],
+        description="可用的備份頻率選項"
+    )

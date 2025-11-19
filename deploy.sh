@@ -62,12 +62,15 @@ sleep 10
 echo -e "${YELLOW}📊 執行資料庫遷移...${NC}"
 docker-compose -f docker-compose.prod.yml exec -T backend alembic upgrade head
 
-# 初始化資料（僅首次部署時）
-read -p "是否執行資料庫初始化？(首次部署選 y，更新部署選 n) [y/N]: " -n 1 -r
+# 初始化資料(僅首次部署時)
+read -p "是否執行資料庫初始化?(首次部署選 y,更新部署選 n) [y/N]: " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-    echo -e "${YELLOW}🗄️  初始化資料庫...${NC}"
+    echo -e "${YELLOW}🗄️  初始化資料庫(處室、分類、管理員)...${NC}"
     docker-compose -f docker-compose.prod.yml exec -T backend python scripts/init_db.py
+    
+    echo -e "${YELLOW}⚙️  初始化系統設定...${NC}"
+    docker-compose -f docker-compose.prod.yml exec -T backend python scripts/init_system_settings.py
 fi
 
 # 顯示服務狀態
@@ -79,7 +82,6 @@ echo -e "\n🌐 服務地址："
 echo "  - API 文檔: http://localhost:8000/api/docs"
 echo "  - API 根路徑: http://localhost:8000/api/"
 echo "  - 健康檢查: http://localhost:8000/health"
-echo "  - Celery 監控: http://localhost:5555"
 
 echo -e "\n📋 查看日誌："
 echo "  docker-compose -f docker-compose.prod.yml logs -f backend"

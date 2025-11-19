@@ -1,102 +1,47 @@
-# Scripts 目錄說明
+# 資料庫初始化腳本使用指南
 
-此目錄包含專案的實用腳本和測試工具。
+## 🎯 快速選擇
 
-## 測試腳本
-
-### test_all_apis.py
-**主要的 API 全面測試腳本**
-
-測試所有已實作的 API 端點，包括：
-- 認證模組（登入、取得使用者資訊）
-- 使用者管理（列表、詳情）
-- 分類管理（CRUD 操作、統計）
-- 檔案管理（列表、統計）
-- 處室管理（列表、詳情）
-- 活動記錄
-- RAG 查詢與歷史
-- 系統設定
-- 登出功能
-
-**使用方式：**
+### 情況 1：第一次設定開發環境
 ```bash
-python scripts/test_all_apis.py
+python scripts/reset_db.py
 ```
+**說明**：完整重置並初始化所有資料（處室、分類、管理員、系統設定）
 
-**前置條件：**
-- FastAPI 伺服器正在運行（http://localhost:8000）
-- 資料庫已初始化
-- 預設管理員帳號存在（username: admin, password: admin123）
+---
 
-### run_tests.py
-**單元測試執行腳本**
-
-執行專案的單元測試套件。
-
-**使用方式：**
-```bash
-python scripts/run_tests.py
-```
-
-## 初始化腳本
-
-### init_db.py
-**資料庫初始化腳本**
-
-初始化資料庫結構並建立預設資料，包括：
-- 建立所有資料表
-- 建立預設處室（人事室、教務處、總務處）
-- 建立預設管理員帳號
-- 建立預設分類
-
-**使用方式：**
+### 情況 2：只需要新增測試帳號和處室資料
 ```bash
 python scripts/init_db.py
 ```
+**說明**：建立處室、分類、管理員帳號（不影響現有系統設定）
 
-### init_system_settings.py
-**系統設定初始化腳本**
+---
 
-初始化系統預設設定值。
-
-**使用方式：**
+### 情況 3：只需要重置系統設定
 ```bash
 python scripts/init_system_settings.py
 ```
+**說明**：初始化系統設定（app, rag, security, feature）
 
-## 工具腳本
+---
 
-### check_tables.py
-**資料表檢查工具**
-
-檢查資料庫中的資料表結構和資料。
-
-**使用方式：**
+### 情況 4：生產環境部署
 ```bash
-python scripts/check_tables.py
+# 1. 執行資料庫遷移
+alembic upgrade head
+
+# 2. 初始化基本資料
+python scripts/init_db.py
+
+# 3. 初始化系統設定
+python scripts/init_system_settings.py
 ```
 
-## 執行順序建議
+---
 
-1. 首次設定：
-   ```bash
-   python scripts/init_db.py
-   python scripts/init_system_settings.py
-   ```
+## ⚠️ 注意
 
-2. 啟動伺服器後測試：
-   ```bash
-   python scripts/test_all_apis.py
-   ```
-
-3. 開發過程中：
-   ```bash
-   python scripts/run_tests.py  # 執行單元測試
-   ```
-
-## 注意事項
-
-- 所有腳本都應該從專案根目錄執行
-- 確保 `.env` 文件中的資料庫連線資訊正確
-- 測試腳本需要伺服器正在運行
-- 初始化腳本會覆蓋現有資料，請謹慎使用
+- **reset_db.py 會刪除所有資料**，生產環境請勿使用
+- 預設密碼統一為 `admin123`，請登入後立即修改
+- 所有腳本可重複執行，不會產生重複資料

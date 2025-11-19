@@ -22,8 +22,12 @@ COPY . .
 # 建立上傳目錄
 RUN mkdir -p uploads logs
 
+# 複製啟動腳本並設定執行權限
+COPY entrypoint.sh .
+RUN chmod +x entrypoint.sh
+
 # 暴露端口
 EXPOSE 8000
 
-# 啟動命令
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# 使用啟動腳本
+CMD ["./entrypoint.sh"]

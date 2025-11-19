@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from app.models.file import File
     from app.models.query_history import QueryHistory
     from app.models.category import Category
+    from app.models.activity import Activity
 
 
 class Department(Base, TimestampMixin):
@@ -36,6 +37,13 @@ class Department(Base, TimestampMixin):
         comment="處室描述"
     )
     
+    color: Mapped[str] = mapped_column(
+        String(20),
+        default="blue",
+        nullable=False,
+        comment="處室顏色"
+    )
+    
     # 關聯
     users: Mapped[List["User"]] = relationship(
         "User",
@@ -57,6 +65,12 @@ class Department(Base, TimestampMixin):
     
     query_history: Mapped[List["QueryHistory"]] = relationship(
         "QueryHistory",
+        back_populates="department",
+        cascade="all, delete-orphan"
+    )
+    
+    activities: Mapped[List["Activity"]] = relationship(
+        "Activity",
         back_populates="department",
         cascade="all, delete-orphan"
     )

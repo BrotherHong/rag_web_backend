@@ -26,6 +26,7 @@ class UserUpdate(BaseModel):
     full_name: Optional[str] = Field(None, min_length=1, max_length=100)
     department_id: Optional[int] = None
     is_active: Optional[bool] = None
+    password: Optional[str] = Field(None, min_length=6, max_length=128, description="新密碼（選填）")
 
 
 class PasswordChange(BaseModel):
@@ -39,7 +40,7 @@ class UserResponse(UserBase):
     id: int
     role: str
     is_active: bool
-    department_id: int
+    department_id: Optional[int]  # super_admin 可以沒有 department_id
     created_at: datetime
     
     model_config = ConfigDict(from_attributes=True)
@@ -92,12 +93,19 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(..., min_length=6, max_length=128, description="新密碼")
 
 
+class LoginResponse(BaseModel):
+    """登入響應（前端期望格式）"""
+    token: str = Field(..., description="JWT Token")
+    user: dict = Field(..., description="使用者資訊")
+
+
 # ===== 處室 Schemas =====
 
 class DepartmentBase(BaseModel):
     """處室基礎欄位"""
     name: str = Field(..., min_length=1, max_length=100, description="處室名稱")
     description: Optional[str] = Field(None, description="處室描述")
+    color: str = Field(default="#3B82F6", description="處室主題顏色 (hex格式)")
 
 
 class DepartmentCreate(DepartmentBase):
@@ -109,11 +117,14 @@ class DepartmentUpdate(BaseModel):
     """更新處室請求"""
     name: Optional[str] = Field(None, min_length=1, max_length=100, description="處室名稱")
     description: Optional[str] = Field(None, description="處室描述")
+    color: Optional[str] = Field(None, description="處室主題顏色")
 
 
 class DepartmentResponse(DepartmentBase):
     """處室響應"""
     id: int
+    user_count: int = Field(default=0, description="使用者數量")
+    file_count: int = Field(default=0, description="檔案數量")
     created_at: datetime
     updated_at: datetime
     
@@ -167,6 +178,7 @@ __all__ = [
     "Token",
     "TokenData",
     "LoginRequest",
+    "ChangePasswordRequest",
     "LoginResponse",
     # 處室
     "DepartmentBase",

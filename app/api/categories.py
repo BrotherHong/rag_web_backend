@@ -113,33 +113,6 @@ async def get_category_stats(
     return CategoryStatsResponse(stats=stats)
 
 
-@router.get("/{category_id}", response_model=CategorySchema)
-async def get_category(
-    category_id: int,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """取得單一分類詳情"""
-    category = await db.get(Category, category_id)
-    
-    if not category:
-        raise HTTPException(status_code=404, detail="分類不存在")
-    
-    # 權限檢查
-    if category.department_id != current_user.department_id:
-        raise HTTPException(status_code=403, detail="無權限查看此分類")
-    
-    # 查詢檔案數量
-    file_count = await db.scalar(
-        select(func.count(File.id)).where(File.category_id == category_id)
-    )
-    
-    cat_schema = CategorySchema.model_validate(category)
-    cat_schema.file_count = file_count
-    
-    return cat_schema
-
-
 @router.post("/", response_model=CategorySchema, status_code=status.HTTP_201_CREATED)
 async def create_category(
     category_data: CategoryCreate,
@@ -173,79 +146,18 @@ async def create_category(
     await db.commit()
     await db.refresh(category)
     
-    # 記錄活動
+    # 記錄活動 (包含處室 ID)
     await activity_service.log_activity(
         db=db,
         user_id=current_user.id,
-        activity_type="upload",
-        description=f"建立分類: {category.name}"
+        activity_type="CREATE_CATEGORY",
+        description=f"建立分類: {category.name}",
+        department_id=current_user.department_id
     )
+    await db.commit()  # 提交活動記錄
     
     cat_schema = CategorySchema.model_validate(category)
     cat_schema.file_count = 0
-    
-    return cat_schema
-
-
-@router.put("/{category_id}", response_model=CategorySchema)
-async def update_category(
-    category_id: int,
-    category_data: CategoryUpdate,
-    current_user: User = Depends(get_current_active_admin),  # 需要管理員權限
-    db: AsyncSession = Depends(get_db)
-):
-    """更新分類
-    
-    - 需要管理員權限
-    - 可更新名稱和顏色
-    - 檢查新名稱是否重複
-    """
-    # 取得分類
-    category = await db.get(Category, category_id)
-    
-    if not category:
-        raise HTTPException(status_code=404, detail="分類不存在")
-    
-    # 權限檢查
-    if category.department_id != current_user.department_id:
-        raise HTTPException(status_code=403, detail="無權限修改此分類")
-    
-    # 更新名稱（檢查重複）
-    if category_data.name and category_data.name != category.name:
-        existing = await db.execute(
-            select(Category).where(
-                Category.name == category_data.name,
-                Category.department_id == current_user.department_id,
-                Category.id != category_id
-            )
-        )
-        if existing.scalar_one_or_none():
-            raise HTTPException(status_code=400, detail="分類名稱已存在")
-        
-        category.name = category_data.name
-    
-    # 更新顏色
-    if category_data.color:
-        category.color = category_data.color
-    
-    await db.commit()
-    await db.refresh(category)
-    
-    # 記錄活動
-    await activity_service.log_activity(
-        db=db,
-        user_id=current_user.id,
-        activity_type="update_file",
-        description=f"更新分類: {category.name}"
-    )
-    
-    # 查詢檔案數量
-    file_count = await db.scalar(
-        select(func.count(File.id)).where(File.category_id == category_id)
-    )
-    
-    cat_schema = CategorySchema.model_validate(category)
-    cat_schema.file_count = file_count
     
     return cat_schema
 
@@ -286,17 +198,19 @@ async def delete_category(
     # 記錄分類名稱（刪除前）
     category_name = category.name
     
-    # 刪除分類
-    await db.delete(category)
-    await db.commit()
-    
-    # 記錄活動
+    # 先記錄活動（在刪除前,包含處室 ID）
     await activity_service.log_activity(
         db=db,
         user_id=current_user.id,
-        activity_type="delete",
-        description=f"刪除分類: {category_name}"
+        activity_type="DELETE_CATEGORY",
+        description=f"刪除分類: {category_name}",
+        department_id=current_user.department_id
     )
+    await db.commit()  # 提交活動記錄
+    
+    # 刪除分類
+    await db.delete(category)
+    await db.commit()
     
     return {"message": "分類已刪除"}
 

@@ -185,8 +185,9 @@ class File(Base, TimestampMixin):
     
     activities: Mapped[List["Activity"]] = relationship(
         "Activity",
-        back_populates="file",
-        cascade="all, delete-orphan"
+        back_populates="file"
+        # 不使用 cascade，讓資料庫的 SET NULL 外鍵處理
+        # 這樣刪除檔案時，活動記錄會保留，只是 file_id 變成 NULL
     )
     
     def __repr__(self) -> str:

@@ -35,11 +35,11 @@ sudo chmod +x /usr/local/bin/docker-compose
 git clone https://github.com/你的帳號/rag_web_backend.git
 cd rag_web_backend
 
-# 2. 設定環境變數
-cp .env.example .env
-nano .env  # 填入生產環境設定
+# 2. 設定環境變數（⚠️ 重要！請務必修改敏感資訊）
+cp .env.production.example .env
+nano .env  # 修改資料庫密碼、JWT密鑰等敏感資訊
 
-# 3. 執行部署腳本
+# 3. 執行部署腳本（會自動執行遷移和初始化）
 chmod +x deploy.sh
 ./deploy.sh
 ```
@@ -51,51 +51,93 @@ chmod +x deploy.sh
 git clone https://github.com/你的帳號/rag_web_backend.git
 cd rag_web_backend
 
-# 2. 設定環境變數
-cp .env.example .env
-nano .env
+# 2. 設定環境變數（⚠️ 重要！）
+cp .env.production.example .env
+nano .env  # 修改以下必要設定：
+         # - POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB
+         # - JWT_SECRET_KEY (至少32字元)
+         # - REDIS_PASSWORD (如果啟用Redis)
+         # - CORS_ORIGINS (前端網址)
 
-# 3. 建立並啟動容器
+# 3. 建立並啟動容器（自動執行遷移和初始化）
 docker-compose -f docker-compose.prod.yml up -d --build
 
-# 4. 執行資料庫遷移
-docker-compose -f docker-compose.prod.yml exec backend alembic upgrade head
-
-# 5. 初始化資料（僅首次部署）
-docker-compose -f docker-compose.prod.yml exec backend python scripts/init_db.py
+# 4. 查看啟動日誌，確認初始化成功
+docker-compose -f docker-compose.prod.yml logs -f backend
 ```
+
+**✨ 新功能：自動初始化**
+
+從 v2.0 開始，容器在首次啟動時會自動執行：
+- ✅ 資料庫遷移 (Alembic migrations)
+- ✅ 創建預設處室和分類
+- ✅ 創建管理員帳號
+- ✅ 初始化系統設定
+
+無需手動執行 `init_db.py` 和 `init_system_settings.py`！
 
 ---
 
 ## ⚙️ 環境變數設定
 
-**重要：請務必修改以下設定值！**
+**⚠️ 安全警告：生產環境必須修改所有預設密碼和密鑰！**
+
+### 必須修改的設定（安全性）
 
 ```env
-# 安全設定（必須修改！）
-SECRET_KEY=請-改-成-至-少-32-字-元-的-隨-機-字-串
-JWT_SECRET_KEY=另-一-個-32-字-元-的-隨-機-字-串
+# 1. JWT 密鑰（必須改為強隨機字串，至少32字元）
+JWT_SECRET_KEY=請使用下方指令生成隨機字串
 
-# 資料庫密碼（必須修改！）
-POSTGRES_PASSWORD=你的強密碼
+# 2. 資料庫認證（必須改為強密碼）
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=請改為強密碼-至少16字元
+POSTGRES_DB=rag_db
 
-# Redis 密碼（必須修改！）
-REDIS_PASSWORD=你的Redis密碼
+# 3. Redis 密碼（如果啟用Redis）
+REDIS_PASSWORD=請改為強密碼
 
-# OpenAI API Key（必須填入！）
-OPENAI_API_KEY=sk-你的真實API金鑰
-
-# CORS 設定（改成你的前端網址）
-CORS_ORIGINS=https://你的網域.com,https://admin.你的網域.com
-
-# 除錯模式（生產環境必須設為 False）
+# 4. 除錯模式（生產環境必須設為 False）
 DEBUG=False
 ```
 
-**生成隨機密鑰：**
-```bash
-python -c "import secrets; print(secrets.token_urlsafe(32))"
+### 需要配置的設定
+
+```env
+# CORS 設定（改成你的前端網址）
+CORS_ORIGINS=https://你的網域.com,https://admin.你的網域.com
+
+# OpenAI API Key（如果使用RAG功能）
+OPENAI_API_KEY=sk-你的真實API金鑰
 ```
+
+### 生成安全密鑰的方法
+
+```bash
+# 方法1: 使用 Python
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+
+# 方法2: 使用 OpenSSL
+openssl rand -base64 32
+
+# 方法3: 使用 UUID
+python -c "import uuid; print(str(uuid.uuid4()).replace('-', ''))"
+```
+
+### 完整配置範例
+
+參考 `.env.production.example` 檔案，包含所有可用的環境變數和詳細說明。
+
+**資料庫 URL 格式：**
+```env
+DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+```
+
+**注意事項：**
+- ✅ 所有密碼至少 16 字元，包含大小寫字母、數字、特殊字符
+- ✅ JWT_SECRET_KEY 至少 32 字元的隨機字串
+- ✅ 不要將 `.env` 檔案提交到 Git（已在 .gitignore 中）
+- ✅ 定期更換密碼和密鑰
+- ✅ 使用環境變數注入或密鑰管理服務（如 AWS Secrets Manager）
 
 ---
 
@@ -105,17 +147,19 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 # 拉取最新程式碼
 git pull origin main
 
-# 重新建立並啟動
+# 重新建立並啟動（會自動執行新的遷移）
 docker-compose -f docker-compose.prod.yml up -d --build
 
-# 執行資料庫遷移
-docker-compose -f docker-compose.prod.yml exec backend alembic upgrade head
+# 查看更新日誌
+docker-compose -f docker-compose.prod.yml logs -f backend
 ```
 
 或使用自動部署腳本：
 ```bash
 ./deploy.sh
 ```
+
+**注意：** 容器啟動時會自動執行未完成的資料庫遷移，無需手動執行 `alembic upgrade head`。
 
 ---
 
@@ -133,9 +177,6 @@ docker-compose -f docker-compose.prod.yml logs -f
 
 # 僅後端
 docker-compose -f docker-compose.prod.yml logs -f backend
-
-# 僅 Celery
-docker-compose -f docker-compose.prod.yml logs -f celery_worker
 ```
 
 ### 重啟服務
@@ -259,7 +300,7 @@ docker system prune -a
 ## 📞 需要協助？
 
 - 查看 [GitHub Issues](https://github.com/你的帳號/rag_web_backend/issues)
-- 閱讀 [開發文件](./backend_docs/)
+- 閱讀 [README](./README.md) 和 [快速開始指南](./QUICKSTART.md)
 - 聯繫維護者
 
 ---
@@ -267,4 +308,3 @@ docker system prune -a
 **部署成功後，訪問：**
 - 🌐 API 文檔: http://你的伺服器IP:8000/api/docs
 - 💚 健康檢查: http://你的伺服器IP:8000/health
-- 🌺 Celery 監控: http://你的伺服器IP:5555

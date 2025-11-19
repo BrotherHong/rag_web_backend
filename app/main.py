@@ -5,27 +5,21 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.core.database import init_db, close_db
-from app.core.redis import init_redis, close_redis
-from app.core.qdrant import init_qdrant, close_qdrant
 from app.api import api_router  # 導入 API 路由
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """應用程式生命週期管理"""
-    # 啟動時初始化所有連線
+    # 啟動時初始化資料庫連線
     await init_db()
-    await init_redis()
-    await init_qdrant()
-    print("✅ 所有資料庫連線已初始化")
+    print("✅ 資料庫連線已初始化")
     
     yield
     
-    # 關閉時清理所有連線
+    # 關閉時清理資料庫連線
     await close_db()
-    await close_redis()
-    await close_qdrant()
-    print("✅ 所有資料庫連線已關閉")
+    print("✅ 資料庫連線已關閉")
 
 # 建立 FastAPI 應用程式
 app = FastAPI(

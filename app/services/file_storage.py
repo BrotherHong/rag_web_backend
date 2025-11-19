@@ -8,8 +8,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO, Optional
 from fastapi import UploadFile, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.services.system_settings import system_settings_service
 
 
 class FileStorageService:
@@ -99,23 +101,33 @@ class FileStorageService:
             return os.path.getsize(file_path)
         return 0
 
-    def validate_file(self, upload_file: UploadFile) -> tuple[bool, Optional[str]]:
+    async def validate_file(
+        self, 
+        upload_file: UploadFile,
+        db: AsyncSession
+    ) -> tuple[bool, Optional[str]]:
         """驗證檔案
         
         Args:
             upload_file: 上傳的檔案
+            db: 資料庫 session
             
         Returns:
             tuple: (is_valid, error_message)
         """
+        # 從資料庫取得檔案大小限制
+        max_file_size = await system_settings_service.get_max_file_size(db)
+        
         # 檢查檔案大小
         if hasattr(upload_file, 'size') and upload_file.size:
-            if upload_file.size > settings.MAX_FILE_SIZE:
-                return False, f"檔案大小超過限制 ({settings.MAX_FILE_SIZE / (1024**2):.0f} MB)"
+            if upload_file.size > max_file_size:
+                return False, f"檔案大小超過限制 ({max_file_size / (1024**2):.0f} MB)"
+        
+        # 從資料庫取得允許的檔案類型
+        allowed_exts = await system_settings_service.get_allowed_file_types(db)
         
         # 檢查檔案類型
         ext = os.path.splitext(upload_file.filename)[1].lower()
-        allowed_exts = settings.allowed_extensions_list
         if ext not in allowed_exts:
             return False, f"不支援的檔案格式: {ext}，允許的格式: {', '.join(allowed_exts)}"
         

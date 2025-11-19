@@ -44,6 +44,8 @@ class ActivityListItem(BaseModel):
     file_name: Optional[str] = None
     ip_address: Optional[str] = None
     created_at: datetime
+    department_id: Optional[int] = Field(None, description="處室 ID")
+    department_name: Optional[str] = Field(None, description="處室名稱")
     
     class Config:
         from_attributes = True

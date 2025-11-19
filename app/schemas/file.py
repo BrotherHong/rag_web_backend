@@ -84,7 +84,6 @@ class FileSchema(BaseModel):
     status: str
     is_vectorized: bool
     vector_count: Optional[int] = 0
-    download_count: int = 0
     created_at: datetime
     updated_at: datetime
 
@@ -106,13 +105,11 @@ class FileDetailResponse(BaseModel):
     status: str
     is_vectorized: bool
     vector_count: Optional[int] = 0
-    download_count: int = 0
     description: Optional[str]
     tags: Optional[List[str]] = []
     processing_error: Optional[str] = None
     created_at: datetime
     updated_at: datetime
-    last_accessed: Optional[datetime]
 
     class Config:
         from_attributes = True

@@ -6,12 +6,13 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Header
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.core.database import get_db
@@ -77,19 +78,26 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    x_proxy_department_id: Optional[str] = Header(None)
 ) -> User:
     """
     從 JWT Token 中取得當前使用者
     
     依賴注入函數，用於需要認證的路由
     
+    支援 super_admin 代理模式：
+    - 當 X-Proxy-Department-Id header 存在且使用者為 super_admin 時
+    - 臨時覆蓋 user.department_id 為指定的處室 ID
+    - 用於 super_admin 查看特定處室資料
+    
     Args:
         token: JWT Token
         db: 資料庫 Session
+        x_proxy_department_id: 代理的處室 ID（從 Header 取得）
         
     Returns:
-        User: 當前使用者物件
+        User: 當前使用者物件（可能包含代理 department_id）
         
     Raises:
         HTTPException: Token 無效或使用者不存在
@@ -112,7 +120,11 @@ async def get_current_user(
         raise credentials_exception
     
     # 從資料庫取得使用者
-    result = await db.execute(select(User).where(User.id == int(user_id)))
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.department))
+        .where(User.id == int(user_id))
+    )
     user = result.scalar_one_or_none()
     
     if user is None:
@@ -123,6 +135,46 @@ async def get_current_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="使用者帳號已停用"
         )
+    
+    # 處理 super_admin 代理模式
+    if x_proxy_department_id is not None:
+        from app.models.user import UserRole
+        
+        # 只有 super_admin 可以使用代理功能
+        if user.role != UserRole.SUPER_ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="只有超級管理員可以使用代理功能"
+            )
+        
+        # 驗證目標處室是否存在
+        try:
+            proxy_dept_id = int(x_proxy_department_id)
+            from app.models.department import Department
+            dept_result = await db.execute(
+                select(Department).where(Department.id == proxy_dept_id)
+            )
+            department = dept_result.scalar_one_or_none()
+            
+            if department is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"處室 ID {proxy_dept_id} 不存在"
+                )
+            
+            # 從 session 中移除 user 物件,防止後續的 commit 影響資料庫
+            db.expunge(user)
+            
+            # 臨時覆蓋 department_id 和 department
+            # 由於已經 expunge,這不會影響資料庫
+            user.department_id = proxy_dept_id
+            user.department = department
+            
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="無效的處室 ID 格式"
+            )
     
     return user
 
@@ -165,13 +217,15 @@ async def get_current_active_admin(
     Raises:
         HTTPException: 使用者不是管理員或帳號未啟用
     """
+    from app.models.user import UserRole
+    
     if not current_user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="使用者帳號未啟用"
         )
     
-    if current_user.role not in ["admin", "super_admin"]:
+    if current_user.role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="需要管理員權限"
@@ -222,7 +276,11 @@ async def authenticate_user(db: AsyncSession, username: str, password: str) -> O
     Returns:
         Optional[User]: 驗證成功返回使用者物件，失敗返回 None
     """
-    result = await db.execute(select(User).where(User.username == username))
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.department))
+        .where(User.username == username)
+    )
     user = result.scalar_one_or_none()
     
     if not user:

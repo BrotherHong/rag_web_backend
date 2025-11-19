@@ -30,7 +30,7 @@ router = APIRouter(prefix="/users", tags=["使用者管理"])
     response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
     summary="建立使用者",
-    dependencies=[Depends(require_role(UserRole.ADMIN, UserRole.DEPT_ADMIN))]
+    dependencies=[Depends(require_role(UserRole.SUPER_ADMIN))]
 )
 async def create_user(
     user_data: UserCreate,
@@ -40,7 +40,7 @@ async def create_user(
     """
     建立新使用者
     
-    需要管理員或處室管理員權限
+    需要系統管理員權限
     
     - **username**: 使用者名稱（唯一）
     - **email**: 電子郵件（唯一）
@@ -72,13 +72,16 @@ async def create_user(
             detail="處室不存在"
         )
     
-    # 處室管理員只能建立自己處室的使用者
-    if current_user.role == UserRole.DEPT_ADMIN:
+    # 系統管理員在代理模式下只能建立代理處室的使用者
+    # 系統管理員非代理模式可以建立任何處室的使用者
+    if current_user.department_id is not None:
+        # 系統管理員代理模式：只能建立代理處室
         if user_data.department_id != current_user.department_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="處室管理員只能建立自己處室的使用者"
+                detail="代理模式下只能建立代理處室的使用者"
             )
+    # 系統管理員非代理模式：無限制，可建立任何處室的使用者
     
     # 建立使用者
     new_user = User(
@@ -86,12 +89,22 @@ async def create_user(
         email=user_data.email,
         full_name=user_data.full_name,
         hashed_password=get_password_hash(user_data.password),
-        role=UserRole.USER,  # 新使用者預設為一般使用者
+        role=UserRole.ADMIN,  # 系統管理員建立的使用者預設為處室管理員
         department_id=user_data.department_id,
         is_active=True
     )
     
     db.add(new_user)
+    
+    # 記錄活動
+    await activity_service.log_activity(
+        db=db,
+        user_id=current_user.id,
+        activity_type=ActivityType.CREATE_USER,
+        description=f"建立使用者: {new_user.username}",
+        department_id=current_user.department_id
+    )
+    
     await db.commit()
     await db.refresh(new_user)
     
@@ -123,10 +136,17 @@ async def list_users(
     """
     query = select(User)
     
-    # 處室管理員只能查看自己處室的使用者
-    if current_user.role == UserRole.DEPT_ADMIN:
+    # 處室管理員只能查詢自己處室的使用者
+    # 系統管理員在代理模式下（有 department_id）也只能查詢代理處室的使用者
+    # 系統管理員非代理模式可以查詢所有使用者
+    if current_user.role == UserRole.ADMIN:
+        # 處室管理員：只能看自己處室
         query = query.where(User.department_id == current_user.department_id)
-    elif department_id:
+    elif current_user.role == UserRole.SUPER_ADMIN and current_user.department_id is not None:
+        # 系統管理員代理模式：只能看代理處室
+        query = query.where(User.department_id == current_user.department_id)
+    elif department_id and current_user.role == UserRole.SUPER_ADMIN:
+        # 系統管理員非代理模式：可以按 department_id 篩選
         query = query.where(User.department_id == department_id)
     
     # 篩選是否啟用
@@ -192,21 +212,32 @@ async def get_user(
         )
     
     # 處室管理員只能查看自己處室的使用者
-    if current_user.role == UserRole.DEPT_ADMIN:
+    # 系統管理員在代理模式下也只能查看代理處室的使用者
+    # 系統管理員非代理模式可以查看所有使用者
+    if current_user.role == UserRole.ADMIN:
+        # 處室管理員：只能看自己處室
         if user.department_id != current_user.department_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="無權限查看此使用者"
             )
+    elif current_user.role == UserRole.SUPER_ADMIN and current_user.department_id is not None:
+        # 系統管理員代理模式：只能看代理處室
+        if user.department_id != current_user.department_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="無權限查看此使用者"
+            )
+    # 系統管理員非代理模式：無限制，可查看所有使用者
     
     return user
 
 
-@router.patch(
+@router.put(
     "/{user_id}",
     response_model=UserResponse,
-    summary="更新使用者",
-    dependencies=[Depends(require_role(UserRole.ADMIN, UserRole.DEPT_ADMIN))]
+    summary="更新使用者資訊",
+    dependencies=[Depends(require_role(UserRole.SUPER_ADMIN))]
 )
 async def update_user(
     user_id: int,
@@ -217,7 +248,7 @@ async def update_user(
     """
     更新使用者資訊
     
-    需要管理員或處室管理員權限
+    需要系統管理員權限
     
     - **user_id**: 使用者 ID
     - **email**: 新的 Email（可選）
@@ -234,16 +265,23 @@ async def update_user(
             detail="使用者不存在"
         )
     
-    # 處室管理員只能更新自己處室的使用者
-    if current_user.role == UserRole.DEPT_ADMIN:
+    # 系統管理員在代理模式下只能更新代理處室的使用者
+    # 系統管理員非代理模式可以更新所有使用者
+    if current_user.department_id is not None:
+        # 系統管理員代理模式：只能更新代理處室
         if user.department_id != current_user.department_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="無權限更新此使用者"
             )
+    # 系統管理員非代理模式：無限制，可更新所有使用者
     
     # 更新欄位
     update_data = user_data.model_dump(exclude_unset=True)
+    
+    # 處理密碼更新
+    if "password" in update_data and update_data["password"]:
+        update_data["hashed_password"] = get_password_hash(update_data.pop("password"))
     
     # 檢查 Email 是否重複
     if "email" in update_data:
@@ -268,6 +306,15 @@ async def update_user(
     for field, value in update_data.items():
         setattr(user, field, value)
     
+    # 記錄活動
+    await activity_service.log_activity(
+        db=db,
+        user_id=current_user.id,
+        activity_type=ActivityType.UPDATE_USER,
+        description=f"更新使用者: {user.username}",
+        department_id=current_user.department_id
+    )
+    
     await db.commit()
     await db.refresh(user)
     
@@ -278,7 +325,7 @@ async def update_user(
     "/{user_id}",
     response_model=MessageResponse,
     summary="刪除使用者",
-    dependencies=[Depends(require_role(UserRole.ADMIN))]
+    dependencies=[Depends(require_role(UserRole.SUPER_ADMIN))]
 )
 async def delete_user(
     user_id: int,
@@ -310,16 +357,18 @@ async def delete_user(
         )
     
     username = user.username
-    await db.delete(user)
-    await db.commit()
     
     # 記錄活動
     await activity_service.log_activity(
         db=db,
         user_id=current_user.id,
-        activity_type="delete",
-        description=f"刪除使用者: {username}"
+        activity_type=ActivityType.DELETE_USER,
+        description=f"刪除使用者: {username}",
+        department_id=current_user.department_id
     )
+    
+    await db.delete(user)
+    await db.commit()
     await db.commit()
     
     return MessageResponse(
@@ -356,17 +405,17 @@ async def change_password(
     
     # 權限檢查
     is_self = user_id == current_user.id
-    is_admin = current_user.role == UserRole.ADMIN
-    is_dept_admin = current_user.role == UserRole.DEPT_ADMIN and user.department_id == current_user.department_id
+    is_super_admin = current_user.role == UserRole.SUPER_ADMIN
+    is_dept_admin = current_user.role == UserRole.ADMIN and user.department_id == current_user.department_id
     
-    if not (is_self or is_admin or is_dept_admin):
+    if not (is_self or is_super_admin or is_dept_admin):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="無權限修改此使用者密碼"
         )
     
     # 如果是修改自己的密碼，需要驗證舊密碼
-    if is_self and not is_admin:
+    if is_self and not is_super_admin:
         if not verify_password(password_data.old_password, user.hashed_password):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -375,16 +424,19 @@ async def change_password(
     
     # 更新密碼
     user.hashed_password = get_password_hash(password_data.new_password)
-    await db.commit()
     
     # 記錄活動
     await activity_service.log_activity(
         db=db,
         user_id=current_user.id,
-        activity_type="update",
-        description=f"修改使用者密碼: {user.username}"
+        activity_type=ActivityType.UPDATE_PROFILE,
+        description=f"修改使用者密碼: {user.username}",
+        department_id=current_user.department_id
     )
+    
     await db.commit()
+    
+    return {"message": "密碼修改成功"}
     
     return MessageResponse(
         message="密碼修改成功",
@@ -408,9 +460,17 @@ async def get_user_stats(
     處室管理員只能看自己處室的統計
     """
     # 基礎查詢（處室隔離）
+    # 處室管理員只能看自己處室的統計
+    # 系統管理員在代理模式下也只能看代理處室的統計
+    # 系統管理員非代理模式可以看所有統計
     base_query = select(User)
-    if current_user.role == UserRole.DEPT_ADMIN:
+    if current_user.role == UserRole.ADMIN:
+        # 處室管理員：只能看自己處室
         base_query = base_query.where(User.department_id == current_user.department_id)
+    elif current_user.role == UserRole.SUPER_ADMIN and current_user.department_id is not None:
+        # 系統管理員代理模式：只能看代理處室
+        base_query = base_query.where(User.department_id == current_user.department_id)
+    # 系統管理員非代理模式：無限制，可看所有統計
     
     # 1. 總使用者數
     total_query = select(func.count()).select_from(base_query.subquery())
@@ -465,8 +525,13 @@ async def get_user_stats(
         Activity.activity_type == ActivityType.LOGIN
     )
     
-    if current_user.role == UserRole.DEPT_ADMIN:
+    if current_user.role == UserRole.ADMIN:
+        # 處室管理員：只能看自己處室
         login_query = login_query.where(User.department_id == current_user.department_id)
+    elif current_user.role == UserRole.SUPER_ADMIN and current_user.department_id is not None:
+        # 系統管理員代理模式：只能看代理處室
+        login_query = login_query.where(User.department_id == current_user.department_id)
+    # 系統管理員非代理模式：無限制，可看所有登入記錄
     
     login_query = login_query.group_by(
         Activity.user_id, User.username, User.full_name

@@ -93,6 +93,7 @@ async def query_documents(
             user_id=current_user.id,
             activity_type="query",
             description=f"查詢: {request.query[:50]}...",
+            department_id=current_user.department_id,
             extra_data={
                 "query_type": request.query_type,
                 "source_count": len(sources)
@@ -234,7 +235,8 @@ async def delete_query_history(
         db=db,
         user_id=current_user.id,
         activity_type="delete",
-        description=f"刪除查詢歷史: {history.query[:50]}..."
+        description=f"刪除查詢歷史: {history.query[:50]}...",
+        department_id=current_user.department_id
     )
 
 
@@ -278,7 +280,8 @@ async def search_documents(
             db=db,
             user_id=current_user.id,
             activity_type="search",
-            description=f"搜尋文檔: {request.query[:50]}..."
+            description=f"搜尋文檔: {request.query[:50]}...",
+            department_id=current_user.department_id
         )
         
         return QueryResponse(
@@ -334,7 +337,8 @@ async def get_document_summary(
             db=db,
             user_id=current_user.id,
             activity_type="view",
-            description=f"查看文檔摘要: {file.original_filename}"
+            description=f"查看文檔摘要: {file.original_filename}",
+            department_id=current_user.department_id
         )
         
         return SummaryResponse(
