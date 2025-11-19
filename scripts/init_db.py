@@ -173,7 +173,7 @@ async def init_admin_users(session: AsyncSession):
     existing = result.scalar_one_or_none()
     
     if existing:
-        print(f"     ⏭️  '{super_admin_data["username"]}' 已存在，跳過")
+        print(f"     ⏭️  '{super_admin_data['username']}' 已存在，跳過")
     else:
         admin = User(**super_admin_data)
         session.add(admin)

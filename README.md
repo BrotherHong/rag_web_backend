@@ -136,7 +136,7 @@ RAG 知識庫管理系統是一個企業級的知識管理解決方案，結合�
 ├── Python venv（本機虛擬環境）
 │   └── FastAPI 應用程式（熱重載、快速除錯）
 │
-└── Docker 容器（docker-compose.yml）
+└── Docker 容器（docker-compose.dev.yml）
     ├── PostgreSQL 16
     └── Redis 7 (可選)
 ```
@@ -148,16 +148,17 @@ RAG 知識庫管理系統是一個企業級的知識管理解決方案，結合�
 
 #### 生產環境（用於正式部署）
 ```
-全部在 Docker 中（docker-compose.prod.yml）
+全部在 Docker 中（docker-compose.yml）
 ├── backend（FastAPI 容器）
 ├── PostgreSQL 16
+├── frontend（Nginx + React）
 └── Redis 7 (可選)
 ```
 
 **特點**：
 - ✅ 完全容器化，環境完全隔離
 - ✅ 一鍵部署，易於擴展
-- ✅ 簡單可靠，生產等級穩定性
+- ✅ 前後端統一網路，方便通訊
 
 ---
 
@@ -214,14 +215,14 @@ QDRANT_URL=http://localhost:6333
 QDRANT_COLLECTION=rag_documents
 ```
 
-### 3. 使用 Docker Compose 啟動服務
+### 3. 使用 Docker Compose 啟動資料庫服務
 
 ```bash
-# 啟動所有服務(PostgreSQL, Redis)
-docker-compose up -d
+# 啟動資料庫服務（PostgreSQL, Redis）
+docker-compose -f docker-compose.dev.yml up -d
 
 # 查看服務狀態
-docker-compose ps
+docker-compose -f docker-compose.dev.yml ps
 ```
 
 ### 4. 建立 Python 虛擬環境
@@ -482,10 +483,10 @@ alembic downgrade -1
 
 ```bash
 # 1. 啟動資料庫服務（Docker）
-docker-compose up -d
+docker-compose -f docker-compose.dev.yml up -d
 
 # 2. 確認服務運行
-docker-compose ps
+docker-compose -f docker-compose.dev.yml ps
 
 # 3. 啟動虛擬環境
 # Windows
@@ -512,150 +513,25 @@ python -m uvicorn app.main:app --reload
 
 ### 🚀 生產環境部署（正式部署）
 
-使用 **docker-compose.prod.yml** 進行完全容器化部署：
+使用 **docker-compose.yml** 進行完全容器化部署，詳見 [DOCKER_DEPLOYMENT.md](./DOCKER_DEPLOYMENT.md)
 
-#### 步驟 1: 準備環境變數
-
-```bash
-# 複製環境變數範本
-cp .env.example .env
-
-# 編輯生產環境配置
-nano .env
-```
-
-**重要配置項**：
-```env
-# 生產環境必須設定
-DEBUG=False
-SECRET_KEY=<強密碼-至少32字元>
-JWT_SECRET_KEY=<強密碼-至少32字元>
-
-# 資料庫密碼（docker-compose.prod.yml 會使用）
-POSTGRES_PASSWORD=<強密碼>
-REDIS_PASSWORD=<強密碼>
-
-# OpenAI API Key（用於 RAG 功能）
-OPENAI_API_KEY=<your-api-key>
-```
-
-#### 步驟 2: 構建並啟動所有服務
+#### 快速部署步驟
 
 ```bash
-# 構建映像並啟動所有容器
-docker-compose -f docker-compose.prod.yml up -d --build
+# 1. 準備環境變數
+cp .env.production.example .env
+nano .env  # 修改密碼和密鑰
 
-# 查看服務狀態
-docker-compose -f docker-compose.prod.yml ps
+# 2. 啟動所有服務
+docker-compose up -d --build
 
-# 查看日誌
-docker-compose -f docker-compose.prod.yml logs -f
+# 3. 初始化資料庫
+docker exec -it rag_backend alembic upgrade head
+docker exec -it rag_backend python scripts/init_db.py
+
+# 4. 驗證部署
+curl http://localhost:8000/api/health
 ```
-
-#### 步驟 3: 初始化資料庫
-
-```bash
-# 進入 backend 容器
-docker-compose -f docker-compose.prod.yml exec backend bash
-
-# 執行資料庫初始化
-python scripts/init_db.py
-
-# 退出容器
-exit
-```
-
-#### 步驟 4: 驗證部署
-
-訪問以下 URL 確認服務正常：
-
-- **API 文件**: http://your-server:8000/docs
-- **健康檢查**: http://your-server:8000/health
-- **Celery 監控**: http://your-server:5555
-
-#### 管理命令
-
-```bash
-# 查看容器狀態
-docker-compose -f docker-compose.prod.yml ps
-
-# 查看特定服務日誌
-docker-compose -f docker-compose.prod.yml logs backend
-docker-compose -f docker-compose.prod.yml logs celery_worker
-
-# 重啟服務
-docker-compose -f docker-compose.prod.yml restart backend
-
-# 停止所有服務
-docker-compose -f docker-compose.prod.yml down
-
-# 停止並刪除數據卷（⚠️ 慎用）
-docker-compose -f docker-compose.prod.yml down -v
-```
-
----
-
-### 🔐 生產環境安全建議
-
-1. **使用強密碼**
-   - 修改 `.env` 中的所有預設密碼
-   - 使用至少 32 字元的隨機字串
-
-2. **使用 Nginx 反向代理**
-
-```nginx
-server {
-    listen 80;
-    server_name api.example.com;
-
-    # HTTPS 重定向
-    return 301 https://$server_name$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name api.example.com;
-
-    # SSL 證書
-    ssl_certificate /path/to/cert.pem;
-    ssl_certificate_key /path/to/key.pem;
-
-    # 反向代理到 FastAPI
-    location / {
-        proxy_pass http://localhost:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    # 檔案上傳大小限制
-    client_max_body_size 50M;
-}
-```
-
-3. **防火牆設定**
-   ```bash
-   # 只開放必要端口
-   ufw allow 80/tcp    # HTTP
-   ufw allow 443/tcp   # HTTPS
-   ufw allow 22/tcp    # SSH
-   ufw enable
-   ```
-
-4. **定期備份**
-   ```bash
-   # 備份資料庫
-   docker-compose -f docker-compose.prod.yml exec postgres \
-     pg_dump -U postgres rag_db > backup_$(date +%Y%m%d).sql
-
-   # 備份上傳檔案
-   tar -czf uploads_backup_$(date +%Y%m%d).tar.gz ./uploads
-   ```
-
-5. **監控與日誌**
-   - 定期檢查日誌: `docker-compose -f docker-compose.prod.yml logs --tail=100`
-   - 考慮使用 Prometheus + Grafana 進行系統監控
 
 ---
 
