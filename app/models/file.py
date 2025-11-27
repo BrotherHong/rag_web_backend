@@ -145,6 +145,25 @@ class File(Base, TimestampMixin):
         comment="檔案內容摘要"
     )
     
+    # 處理後的檔案路徑
+    markdown_path: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+        comment="Markdown 轉換後的檔案路徑"
+    )
+    
+    summary_path: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+        comment="摘要 JSON 檔案路徑"
+    )
+    
+    embedding_path: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+        comment="嵌入向量 JSON 檔案路徑"
+    )
+    
     # 外鍵
     uploader_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),

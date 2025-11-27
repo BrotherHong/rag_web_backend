@@ -29,7 +29,8 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
-    lifespan=lifespan  # 添加生命週期管理
+    lifespan=lifespan,  # 添加生命週期管理
+    root_path="/stuinfo-api"
 )
 
 # 設定 CORS

@@ -2,7 +2,7 @@
 
 from typing import List, Dict, Optional
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel
@@ -25,9 +25,11 @@ class CheckDuplicatesRequest(BaseModel):
 
 @router.post("/batch", summary="批次上傳檔案")
 async def batch_upload(
+    background_tasks: BackgroundTasks,
     files: List[UploadFile] = File(...),
     categories: str = Form("{}"),  # JSON 字串格式的分類對應
     removeFileIds: str = Form("[]"),  # 要刪除的舊檔案 ID 列表
+    startProcessing: str = Form("false"),  # 是否立即開始處理
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -52,6 +54,13 @@ async def batch_upload(
     from app.models import File as FileModel, Category
     from app.services.file_storage import file_storage
     from app.services.activity import activity_service
+    
+    # Debug: 輸出接收到的參數
+    print(f"\n{'='*60}")
+    print(f"📤 收到上傳請求")
+    print(f"檔案數量: {len(files)}")
+    print(f"startProcessing 參數: {startProcessing}")
+    print(f"{'='*60}\n")
     
     # 解析參數
     try:
@@ -198,11 +207,98 @@ async def batch_upload(
     task["status"] = "completed" if task["failedFiles"] == 0 else "partial"
     task["updated_at"] = datetime.now().isoformat()
     
+    # 如果需要開始處理，觸發背景任務
+    should_process = startProcessing.lower() == "true"
+    
+    print(f"\n{'='*60}")
+    print(f"🔍 檢查是否需要觸發處理")
+    print(f"startProcessing: '{startProcessing}'")
+    print(f"should_process: {should_process}")
+    print(f"success_count: {success_count}")
+    print(f"{'='*60}\n")
+    
+    if should_process and success_count > 0:
+        # 收集成功上傳的檔案 ID
+        uploaded_file_ids = []
+        for idx, file in enumerate(files):
+            if task["files"][idx]["status"] == "completed":
+                # 從資料庫查詢檔案 ID
+                result = await db.execute(
+                    select(FileModel).where(
+                        FileModel.original_filename == file.filename,
+                        FileModel.department_id == current_user.department_id
+                    ).order_by(FileModel.id.desc()).limit(1)
+                )
+                file_record = result.scalar_one_or_none()
+                if file_record:
+                    uploaded_file_ids.append(file_record.id)
+        
+        if uploaded_file_ids and background_tasks:
+            # 啟動背景處理任務
+            from app.services.file_processor import file_processing_service
+            
+            print(f"🚀 啟動背景處理任務，檔案 IDs: {uploaded_file_ids}")
+            
+            background_tasks.add_task(
+                process_files_in_background,
+                uploaded_file_ids,
+                task_id
+            )
+            task["status"] = "processing"
+            task["message"] = "檔案上傳完成，開始處理中..."
+    
     return {
         "success": True,
         "taskId": task_id,
-        "message": f"成功上傳 {success_count} 個檔案"
+        "message": f"成功上傳 {success_count} 個檔案" + (" (處理中...)" if should_process and success_count > 0 else "")
     }
+
+
+async def process_files_in_background(file_ids: List[int], task_id: str):
+    """背景任務：處理檔案"""
+    from app.services.file_processor import file_processing_service
+    from app.core.database import AsyncSessionLocal
+    
+    print(f"\n{'='*60}")
+    print(f"🔄 背景處理開始")
+    print(f"任務 ID: {task_id}")
+    print(f"檔案 IDs: {file_ids}")
+    print(f"{'='*60}\n")
+    
+    # 建立新的 DB session
+    async with AsyncSessionLocal() as session:
+        try:
+            results = await file_processing_service.process_files_batch(
+                file_ids=file_ids,
+                task_id=task_id,
+                db=session
+            )
+            
+            print(f"\n{'='*60}")
+            print(f"✅ 背景處理完成")
+            print(f"成功: {results['success']}, 失敗: {results['failed']}")
+            print(f"{'='*60}\n")
+            
+            # 更新任務狀態
+            if task_id in upload_tasks:
+                task = upload_tasks[task_id]
+                task["processing_results"] = results
+                task["status"] = "completed" if results["failed"] == 0 else "partial"
+                task["updated_at"] = datetime.now().isoformat()
+                
+        except Exception as e:
+            print(f"\n{'='*60}")
+            print(f"❌ 背景處理失敗: {e}")
+            print(f"{'='*60}\n")
+            
+            import traceback
+            traceback.print_exc()
+            
+            if task_id in upload_tasks:
+                task = upload_tasks[task_id]
+                task["status"] = "failed"
+                task["error"] = str(e)
+                task["updated_at"] = datetime.now().isoformat()
 
 
 @router.get("/progress/{task_id}", summary="查詢上傳進度")

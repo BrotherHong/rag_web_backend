@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     
     # 應用設定
     APP_NAME: str = "RAG Knowledge Base"
-    DEBUG: bool = False
+    DEBUG: bool = False  # 設為 False 關閉 SQL 日誌
     API_V1_PREFIX: str = "/api"
     
     # 安全設定
@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     
     # CORS
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
+    
+    # Ollama LLM 設定
+    OLLAMA_BASE_URL: str = "https://primehub.aic.ncku.edu.tw/console/apps/ollama-0-11-10-z0s7s"
+    OLLAMA_LLM_MODEL: str = "qwen2.5:14b"
+    OLLAMA_EMBEDDING_MODEL: str = "bge-m3"
     
     model_config = SettingsConfigDict(
         env_file=".env",
