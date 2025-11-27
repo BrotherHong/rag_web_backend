@@ -2,10 +2,11 @@
 
 import math
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Header
 from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
+from typing import Optional as OptionalType
 
 from app.core.database import get_db
 from app.core.security import get_current_user
@@ -29,27 +30,66 @@ from app.services.activity import activity_service
 router = APIRouter(prefix="/rag", tags=["RAG查詢"])
 
 
+# 可選認證：允許匿名訪問
+async def get_current_user_optional(
+    authorization: OptionalType[str] = Header(None),
+    db: AsyncSession = Depends(get_db)
+) -> OptionalType[User]:
+    """
+    可選的用戶認證
+    如果提供 token 則驗證，否則返回 None（匿名用戶）
+    """
+    if not authorization:
+        return None
+    
+    try:
+        # 使用現有的認證邏輯
+        from app.core.security import verify_token
+        token = authorization.replace("Bearer ", "")
+        payload = verify_token(token)
+        user_id = payload.get("user_id")
+        
+        if user_id:
+            result = await db.execute(select(User).where(User.id == user_id))
+            return result.scalar_one_or_none()
+    except:
+        pass
+    
+    return None
+
+
 @router.post("/query", response_model=QueryResponse)
 async def query_documents(
     request: QueryRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: OptionalType[User] = Depends(get_current_user_optional)
 ):
-    """RAG 查詢
+    """RAG 查詢（公開端點，無需認證）
     
     - 使用語義搜尋找到相關文檔
     - 生成基於文檔的答案
-    - 自動記錄查詢歷史
-    - 處室資料隔離
+    - 自動記錄查詢歷史（如果已登入）
+    - 支援處室資料過濾
     """
     try:
         # 解析參數
         scope = SearchScope(request.scope)
         query_type = QueryType(request.query_type)
         
+        # 決定處室 ID：優先使用 scope_ids，否則使用已登入用戶的處室
+        department_id = None
+        if request.scope_ids and len(request.scope_ids) > 0:
+            department_id = request.scope_ids[0]
+        elif current_user and current_user.department_id:
+            department_id = current_user.department_id
+        else:
+            # 匿名用戶且無 scope_ids，使用預設處室 (ID: 1)
+            department_id = 1
+        
         # 呼叫 RAG 處理器
         result = await mock_rag_processor.query(
             query_text=request.query,
+            department_id=department_id,
             scope=scope,
             scope_ids=request.scope_ids,
             query_type=query_type,
@@ -71,34 +111,36 @@ async def query_documents(
                 score=source.score
             ))
         
-        # 儲存查詢歷史
-        query_history = QueryHistory(
-            query=result.query,
-            answer=result.answer,
-            sources=[s.model_dump() for s in sources],
-            source_count=len(sources),
-            query_type=request.query_type,
-            scope=request.scope,
-            tokens_used=result.tokens_used,
-            processing_time=result.processing_time,
-            user_id=current_user.id
-        )
-        
-        db.add(query_history)
-        await db.commit()
-        
-        # 記錄活動
-        await activity_service.log_activity(
-            db=db,
-            user_id=current_user.id,
-            activity_type="query",
-            description=f"查詢: {request.query[:50]}...",
-            department_id=current_user.department_id,
-            extra_data={
-                "query_type": request.query_type,
-                "source_count": len(sources)
-            }
-        )
+        # 儲存查詢歷史（僅在已登入時）
+        if current_user:
+            query_history = QueryHistory(
+                query=result.query,
+                answer=result.answer,
+                sources=[s.model_dump() for s in sources],
+                source_count=len(sources),
+                query_type=request.query_type,
+                scope=request.scope,
+                tokens_used=result.tokens_used,
+                processing_time=result.processing_time,
+                user_id=current_user.id,
+                department_id=current_user.department_id
+            )
+            
+            db.add(query_history)
+            await db.commit()
+            
+            # 記錄活動
+            await activity_service.log_activity(
+                db=db,
+                user_id=current_user.id,
+                activity_type="query",
+                description=f"查詢: {request.query[:50]}...",
+                department_id=current_user.department_id,
+                extra_data={
+                    "query_type": request.query_type,
+                    "source_count": len(sources)
+                }
+            )
         
         return QueryResponse(
             query=result.query,
@@ -256,6 +298,7 @@ async def search_documents(
         # 呼叫搜尋功能
         sources = await mock_rag_processor.search_similar_documents(
             query_text=request.query,
+            department_id=current_user.department_id,
             top_k=request.top_k,
             filters=request.filters
         )

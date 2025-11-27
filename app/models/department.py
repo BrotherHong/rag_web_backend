@@ -31,6 +31,14 @@ class Department(Base, TimestampMixin):
         comment="處室名稱"
     )
     
+    slug: Mapped[str] = mapped_column(
+        String(50),
+        unique=True,
+        nullable=False,
+        index=True,
+        comment="處室代稱（URL 用）"
+    )
+    
     description: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,

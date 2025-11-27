@@ -104,6 +104,7 @@ class LoginResponse(BaseModel):
 class DepartmentBase(BaseModel):
     """處室基礎欄位"""
     name: str = Field(..., min_length=1, max_length=100, description="處室名稱")
+    slug: str = Field(..., min_length=1, max_length=50, description="處室代稱（URL用，如 hr, acc, ga）")
     description: Optional[str] = Field(None, description="處室描述")
     color: str = Field(default="#3B82F6", description="處室主題顏色 (hex格式)")
 
@@ -116,6 +117,7 @@ class DepartmentCreate(DepartmentBase):
 class DepartmentUpdate(BaseModel):
     """更新處室請求"""
     name: Optional[str] = Field(None, min_length=1, max_length=100, description="處室名稱")
+    slug: Optional[str] = Field(None, min_length=1, max_length=50, description="處室代稱")
     description: Optional[str] = Field(None, description="處室描述")
     color: Optional[str] = Field(None, description="處室主題顏色")
 

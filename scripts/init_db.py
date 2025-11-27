@@ -24,26 +24,44 @@ async def init_departments(session: AsyncSession):
     print("🏢 正在初始化處室...")
     
     departments_data = [
-        {"name": "人事室", "description": "負責人事管理、招聘、培訓等業務", "color": "#3B82F6"},
-        {"name": "會計室", "description": "負責財務管理、預算編制、會計核算等業務", "color": "#10B981"},
-        {"name": "總務處", "description": "負責行政總務、資產管理、採購等業務", "color": "#F59E0B"},
+        {
+            "name": "人事室",
+            "slug": "hr",
+            "description": "負責人事管理、招聘、培訓等業務",
+            "color": "#3B82F6"
+        },
+        {
+            "name": "會計室",
+            "slug": "acc",
+            "description": "負責財務管理、預算編制、會計核算等業務",
+            "color": "#10B981"
+        },
+        {
+            "name": "總務處",
+            "slug": "ga",
+            "description": "負責行政總務、資產管理、採購等業務",
+            "color": "#F59E0B"
+        },
     ]
     
     created_count = 0
     for dept_data in departments_data:
-        # 檢查是否已存在
+        # 檢查是否已存在（檢查名稱或 slug）
         result = await session.execute(
-            select(Department).where(Department.name == dept_data["name"])
+            select(Department).where(
+                (Department.name == dept_data["name"]) |
+                (Department.slug == dept_data["slug"])
+            )
         )
         existing = result.scalar_one_or_none()
         
         if existing:
-            print(f"  ⏭️  處室 '{dept_data['name']}' 已存在，跳過")
+            print(f"  ⏭️  處室 '{dept_data['name']}' (/{dept_data['slug']}) 已存在，跳過")
         else:
             dept = Department(**dept_data)
             session.add(dept)
             created_count += 1
-            print(f"  ✅ 建立處室: {dept_data['name']} (顏色: {dept_data['color']})")
+            print(f"  ✅ 建立處室: {dept_data['name']} (/{dept_data['slug']}, 顏色: {dept_data['color']})")
     
     await session.commit()
     print(f"✨ 處室初始化完成！建立 {created_count} 個處室\n")

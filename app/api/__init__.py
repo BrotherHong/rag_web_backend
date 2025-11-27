@@ -1,7 +1,7 @@
 """API 路由總入口"""
 
 from fastapi import APIRouter
-from app.api import auth, users, departments, files, categories, rag, activities, settings, statistics, backups, upload
+from app.api import auth, users, departments, files, categories, rag, activities, settings, statistics, backups, upload, public
 
 # 建立 API 路由器
 api_router = APIRouter()
@@ -27,5 +27,6 @@ api_router.include_router(settings.router)
 api_router.include_router(statistics.router)
 api_router.include_router(backups.router)
 api_router.include_router(upload.router)
+api_router.include_router(public.router)  # 公開 API（無需認證）
 
 __all__ = ["api_router"]

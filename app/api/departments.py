@@ -80,6 +80,7 @@ async def list_departments(
         dept_dict = {
             "id": dept.id,
             "name": dept.name,
+            "slug": dept.slug,
             "description": dept.description,
             "color": dept.color,
             "user_count": user_count,
@@ -122,6 +123,48 @@ async def get_department(
     return department
 
 
+@router.get("/by-slug/{slug}", response_model=DepartmentResponse, summary="根據代稱取得處室")
+async def get_department_by_slug(
+    slug: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    根據處室代稱取得處室詳細資訊（公開端點）
+    
+    - **slug**: 處室代稱（如 hr, acc, ga）
+    """
+    result = await db.execute(select(Department).where(Department.slug == slug))
+    department = result.scalar_one_or_none()
+    
+    if not department:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"找不到代稱為 '{slug}' 的處室"
+        )
+    
+    # 計算使用者和檔案數量
+    user_count = await db.scalar(
+        select(func.count()).where(User.department_id == department.id)
+    ) or 0
+    
+    file_count = await db.scalar(
+        select(func.count()).where(File.department_id == department.id)
+    ) or 0
+    
+    # 返回完整資訊
+    return {
+        "id": department.id,
+        "name": department.name,
+        "slug": department.slug,
+        "description": department.description,
+        "color": department.color,
+        "user_count": user_count,
+        "file_count": file_count,
+        "created_at": department.created_at,
+        "updated_at": department.updated_at
+    }
+
+
 @router.post(
     "/",
     response_model=DepartmentResponse,
@@ -140,6 +183,7 @@ async def create_department(
     需要系統管理員權限
     
     - **name**: 處室名稱（唯一）
+    - **slug**: 處室代稱（唯一，如 hr, acc, ga）
     - **description**: 處室描述（可選）
     """
     # 檢查名稱是否已存在
@@ -148,6 +192,14 @@ async def create_department(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="處室名稱已存在"
+        )
+    
+    # 檢查 slug 是否已存在
+    result = await db.execute(select(Department).where(Department.slug == department_data.slug))
+    if result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="處室代稱已存在"
         )
     
     # 建立處室
@@ -198,6 +250,7 @@ async def update_department(
     
     - **department_id**: 處室 ID
     - **name**: 新處室名稱（可選）
+    - **slug**: 新處室代稱（可選）
     - **description**: 新處室描述（可選）
     """
     # 查詢處室
@@ -222,6 +275,20 @@ async def update_department(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="處室名稱已被使用"
+            )
+    
+    # 檢查 slug 是否與其他處室重複
+    if department_data.slug and department_data.slug != department.slug:
+        result = await db.execute(
+            select(Department).where(
+                Department.slug == department_data.slug,
+                Department.id != department_id
+            )
+        )
+        if result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="處室代稱已被使用"
             )
     
     # 更新欄位
