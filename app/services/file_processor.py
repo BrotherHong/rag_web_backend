@@ -177,6 +177,7 @@ class FileProcessingService:
             temp_summary_path = temp_dir / "summaries" / f"{file_path.stem}_summary.json"
             temp_summary_path.parent.mkdir(parents=True, exist_ok=True)
             
+            # 使用新的summarizer，會自動處理長文檔分塊
             success = await asyncio.to_thread(
                 self.summarizer.process_markdown_file,
                 temp_md_path,
@@ -196,6 +197,7 @@ class FileProcessingService:
             file_record.processing_progress = 80
             await db.commit()
             
+            # 處理主摘要的嵌入
             temp_embedding_path = temp_dir / "embeddings" / f"{file_path.stem}_embedding.json"
             temp_embedding_path.parent.mkdir(parents=True, exist_ok=True)
             
@@ -208,6 +210,35 @@ class FileProcessingService:
             if not success:
                 file_record.error_message = "嵌入生成失敗"
                 raise Exception("嵌入生成失敗")
+            
+            # 檢查並處理分塊摘要的嵌入
+            additional_embedding_files = []
+            summary_dir = temp_summary_path.parent
+            base_name = file_path.stem
+            
+            # 動態尋找所有分塊摘要檔案
+            i = 2
+            while True:
+                part_summary_file = summary_dir / f"{base_name}_part{i}_summary.json"
+                if not part_summary_file.exists():
+                    break  # 沒有更多分塊
+                    
+                part_embedding_file = temp_dir / "embeddings" / f"{base_name}_part{i}_embedding.json"
+                
+                success = await asyncio.to_thread(
+                    self.embedder.process_summary_file,
+                    part_summary_file,
+                    part_embedding_file
+                )
+                
+                if success:
+                    additional_embedding_files.append(part_embedding_file)
+                    print(f"      ✅ 分塊 {i} 嵌入完成")
+                    
+                i += 1
+            
+            if additional_embedding_files:
+                print(f"    🔢 處理了 {len(additional_embedding_files)} 個分塊的嵌入")
             
             file_record.processing_progress = 90
             await db.commit()
@@ -223,13 +254,43 @@ class FileProcessingService:
             final_md_path = file_storage._get_processed_path(department_id, "output_md") / temp_md_path.name
             await asyncio.to_thread(shutil.move, str(temp_md_path), str(final_md_path))
             
-            # 移動 summary
+            # 移動主摘要
             final_summary_path = file_storage._get_processed_path(department_id, "summaries") / temp_summary_path.name
             await asyncio.to_thread(shutil.move, str(temp_summary_path), str(final_summary_path))
             
-            # 移動 embedding
+            # 移動分塊摘要檔案
+            additional_summary_files = []
+            summary_dir = temp_summary_path.parent
+            base_name = file_path.stem
+            
+            i = 2
+            while True:
+                part_summary_file = summary_dir / f"{base_name}_part{i}_summary.json"
+                if not part_summary_file.exists():
+                    break
+                    
+                final_part_summary = file_storage._get_processed_path(department_id, "summaries") / part_summary_file.name
+                await asyncio.to_thread(shutil.move, str(part_summary_file), str(final_part_summary))
+                additional_summary_files.append(final_part_summary)
+                print(f"    📄 移動分塊摘要: {part_summary_file.name}")
+                i += 1
+            
+            # 移動主嵌入
             final_embedding_path = file_storage._get_processed_path(department_id, "embeddings") / temp_embedding_path.name
             await asyncio.to_thread(shutil.move, str(temp_embedding_path), str(final_embedding_path))
+            
+            # 移動分塊嵌入檔案
+            moved_embedding_count = 0
+            for embedding_file in additional_embedding_files:
+                if embedding_file.exists():
+                    final_part_embedding = file_storage._get_processed_path(department_id, "embeddings") / embedding_file.name
+                    await asyncio.to_thread(shutil.move, str(embedding_file), str(final_part_embedding))
+                    moved_embedding_count += 1
+                    print(f"    🔢 移動分塊嵌入: {embedding_file.name}")
+            
+            # 計算總的chunk和vector數量
+            total_chunks = 1 + len(additional_summary_files)
+            total_vectors = 1 + moved_embedding_count
             
             # 更新資料庫記錄
             file_record.file_path = str(final_data_path)
@@ -237,10 +298,14 @@ class FileProcessingService:
             file_record.summary_path = str(final_summary_path)
             file_record.embedding_path = str(final_embedding_path)
             file_record.is_vectorized = True
+            file_record.chunk_count = total_chunks
+            file_record.vector_count = total_vectors
             file_record.processing_progress = 100
             await db.commit()
             
             print(f"✅ 檔案處理完成: {file_record.original_filename}")
+            if total_chunks > 1:
+                print(f"    📄 生成了 {total_chunks} 個分塊摘要和 {total_vectors} 個向量嵌入")
             
             # 刪除 unprocessed 中的原始檔案
             if file_path.exists() and 'unprocessed' in str(file_path):

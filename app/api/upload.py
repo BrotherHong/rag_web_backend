@@ -1,7 +1,7 @@
 """上傳管理 API 路由 - 處理批次上傳和進度追蹤"""
 
 from typing import List, Dict, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -15,6 +15,43 @@ router = APIRouter(prefix="/upload", tags=["上傳管理"])
 
 # 模擬的上傳任務儲存（實際應用中應該使用 Redis 或資料庫）
 upload_tasks: Dict[str, dict] = {}
+
+# 任務保留時間（秒）- 完成的任務保留30分鐘
+TASK_RETENTION_SECONDS = 30 * 60
+
+import asyncio
+from datetime import datetime, timezone
+
+async def cleanup_old_tasks():
+    """清理舊的已完成任務"""
+    current_time = datetime.now(timezone.utc)
+    tasks_to_remove = []
+    
+    for task_id, task in upload_tasks.items():
+        if task.get("status") in ["completed", "failed", "partial"]:
+            completed_time = task.get("completed_at")
+            if completed_time and (current_time - completed_time).total_seconds() > TASK_RETENTION_SECONDS:
+                tasks_to_remove.append(task_id)
+    
+    for task_id in tasks_to_remove:
+        del upload_tasks[task_id]
+        print(f"🗑️ 清理過期任務: {task_id}")
+
+# 啟動清理任務（每5分鐘執行一次）
+import threading
+def start_cleanup_timer():
+    def run_cleanup():
+        try:
+            asyncio.run(cleanup_old_tasks())
+        except Exception as e:
+            print(f"任務清理錯誤: {e}")
+        # 5分鐘後再次執行
+        threading.Timer(300, run_cleanup).start()
+    
+    threading.Timer(300, run_cleanup).start()
+
+# 啟動清理定時器
+start_cleanup_timer()
 
 
 # Pydantic Models
@@ -205,6 +242,7 @@ async def batch_upload(
     
     # 更新任務最終狀態
     task["status"] = "completed" if task["failedFiles"] == 0 else "partial"
+    task["completed_at"] = datetime.now(timezone.utc)  # 添加完成時間
     task["updated_at"] = datetime.now().isoformat()
     
     # 如果需要開始處理，觸發背景任務
@@ -284,6 +322,7 @@ async def process_files_in_background(file_ids: List[int], task_id: str):
                 task = upload_tasks[task_id]
                 task["processing_results"] = results
                 task["status"] = "completed" if results["failed"] == 0 else "partial"
+                task["completed_at"] = datetime.now(timezone.utc)  # 添加完成時間
                 task["updated_at"] = datetime.now().isoformat()
                 
         except Exception as e:
@@ -326,7 +365,12 @@ async def get_upload_progress(
     if not task:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="上傳任務不存在"
+            detail={
+                "error": "上傳任務不存在",
+                "reason": "任務可能已完成並清理，或任務 ID 無效",
+                "suggestion": "停止輪詢此任務，刷新頁面查看檔案狀態",
+                "task_id": task_id
+            }
         )
     
     # 權限檢查

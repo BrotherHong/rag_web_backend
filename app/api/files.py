@@ -575,34 +575,44 @@ async def delete_file(
     
     # 記錄檔名（刪除前）
     original_filename = file.original_filename
+    department_id = file.department_id
+    
+    # 使用完整清理功能刪除所有相關檔案
+    cleanup_stats = file_storage.delete_file_completely(file, department_id)
     
     # 刪除資料庫記錄
     await db.delete(file)
     await db.commit()
     
     # 記錄活動（在刪除後，不關聯 file_id）
+    cleanup_summary = f"刪除檔案: {original_filename}"
+    if cleanup_stats['summary_files'] > 0 or cleanup_stats['embedding_files'] > 0:
+        cleanup_summary += f" (包含 {cleanup_stats['summary_files']} 個摘要檔案, {cleanup_stats['embedding_files']} 個嵌入檔案)"
+    
     await activity_service.log_activity(
         db=db,
         user_id=current_user.id,
         activity_type="DELETE",
-        description=f"刪除檔案: {original_filename}",
+        description=cleanup_summary,
         department_id=current_user.department_id
         # 不傳遞 file_id，因為檔案已被刪除
     )
     await db.commit()  # 提交活動記錄
     
-    # 刪除實體檔案
-    if os.path.exists(file.file_path):
-        try:
-            file_storage.delete_file(file.file_path)
-        except Exception as e:
-            print(f"刪除實體檔案失敗: {str(e)}")
-    
     # TODO: 刪除 Qdrant 向量
     # if file.is_vectorized:
     #     await qdrant_service.delete_vectors(file_id)
     
-    return {"success": True, "message": "檔案已刪除"}
+    # 準備回應訊息
+    message = "檔案已完全刪除"
+    if cleanup_stats['errors']:
+        message += f"，但有 {len(cleanup_stats['errors'])} 個清理錯誤"
+    
+    return {
+        "success": True, 
+        "message": message,
+        "cleanup_stats": cleanup_stats
+    }
 
 
 @router.get("/{file_id}/download")

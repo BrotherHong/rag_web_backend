@@ -148,6 +148,185 @@ class FileStorageService:
         except Exception as e:
             print(f"刪除檔案失敗: {file_path}, 錯誤: {str(e)}")
             return False
+    
+    def delete_file_completely(self, file_record, department_id: int) -> dict:
+        """完整刪除檔案及其所有相關檔案
+        
+        包括：
+        - 原始檔案
+        - Markdown 轉換檔案
+        - 摘要檔案（包括分塊檔案 part1, part2, etc.）
+        - 嵌入向量檔案（包括分塊檔案）
+        
+        Args:
+            file_record: 檔案記錄物件
+            department_id: 處室 ID
+            
+        Returns:
+            dict: 清理結果統計
+        """
+        cleanup_stats = {
+            'original_file': False,
+            'markdown_file': False,
+            'summary_files': 0,
+            'embedding_files': 0,
+            'errors': []
+        }
+        
+        try:
+            # 取得檔案基本資訊
+            original_filename = file_record.original_filename
+            file_path = file_record.file_path
+            
+            # 從實際檔案路徑推斷檔名主幹，而不是僅從 original_filename
+            # 因為處理後的檔案可能有時間戳後綴
+            if file_path and Path(file_path).exists():
+                # 從檔案路徑取得實際檔名主幹
+                filename_stem = Path(file_path).stem
+            else:
+                # 如果檔案不存在，嘗試從 original_filename 推斷
+                filename_stem = Path(original_filename).stem
+            
+            # 特別處理：如果在 processed 目錄中找不到以 filename_stem 命名的檔案，
+            # 嘗試查找包含原始檔名（去掉副檔名）的檔案
+            processed_path = self._get_department_path(department_id, "processed")
+            
+            # 先用原始方法查找
+            test_summary = processed_path / "summaries" / f"{filename_stem}_summary.json"
+            test_embedding = processed_path / "embeddings" / f"{filename_stem}_embedding.json"
+            
+            if not test_summary.exists() and not test_embedding.exists():
+                # 如果找不到，嘗試在目錄中搜尋包含原始檔名的檔案
+                original_stem = Path(original_filename).stem
+                summary_dir = processed_path / "summaries"
+                
+                if summary_dir.exists():
+                    # 搜尋以原始檔名開頭的摘要檔案，優先找主檔案（不含 _part）
+                    matching_files = list(summary_dir.glob(f"{original_stem}*_summary.json"))
+                    if matching_files:
+                        # 優先選擇主檔案（不含 _part 的）
+                        main_files = [f for f in matching_files if "_part" not in f.stem]
+                        if main_files:
+                            # 從主檔案推斷實際的檔名主幹
+                            actual_filename = main_files[0].stem.replace("_summary", "")
+                            filename_stem = actual_filename
+                            print(f"🔍 從主檔案推斷檔名主幹: {filename_stem}")
+                        else:
+                            # 如果沒有主檔案，從分塊檔案推斷
+                            actual_filename = matching_files[0].stem.replace("_summary", "")
+                            # 移除 _part 部分，獲得基本檔名
+                            if "_part" in actual_filename:
+                                filename_stem = actual_filename.rsplit("_part", 1)[0]
+                            else:
+                                filename_stem = actual_filename
+                            print(f"🔍 從分塊檔案推斷檔名主幹: {filename_stem}")
+            
+            print(f"📂 使用檔名主幹進行清理: {filename_stem}")
+            print(f"📂 原始檔名: {original_filename}")
+            
+            # 取得處室路徑
+            dept_path = self._get_department_path(department_id)
+            processed_path = self._get_department_path(department_id, "processed")
+            
+            # 1. 刪除原始檔案
+            if file_record.file_path and os.path.exists(file_record.file_path):
+                try:
+                    os.remove(file_record.file_path)
+                    cleanup_stats['original_file'] = True
+                    print(f"✅ 已刪除原始檔案: {file_record.file_path}")
+                except Exception as e:
+                    cleanup_stats['errors'].append(f"刪除原始檔案失敗: {str(e)}")
+            
+            # 2. 刪除 Markdown 檔案
+            markdown_file = processed_path / "output_md" / f"{filename_stem}.md"
+            if markdown_file.exists():
+                try:
+                    markdown_file.unlink()
+                    cleanup_stats['markdown_file'] = True
+                    print(f"✅ 已刪除 Markdown 檔案: {markdown_file}")
+                except Exception as e:
+                    cleanup_stats['errors'].append(f"刪除 Markdown 檔案失敗: {str(e)}")
+            
+            # 3. 刪除摘要檔案（包括分塊檔案）
+            summary_dir = processed_path / "summaries"
+            if summary_dir.exists():
+                # 主摘要檔案
+                main_summary = summary_dir / f"{filename_stem}_summary.json"
+                if main_summary.exists():
+                    try:
+                        main_summary.unlink()
+                        cleanup_stats['summary_files'] += 1
+                        print(f"✅ 已刪除主摘要檔案: {main_summary}")
+                    except Exception as e:
+                        cleanup_stats['errors'].append(f"刪除主摘要檔案失敗: {str(e)}")
+                
+                # 分塊摘要檔案（part2, part3, ...）
+                for part_file in summary_dir.glob(f"{filename_stem}_part*_summary.json"):
+                    try:
+                        part_file.unlink()
+                        cleanup_stats['summary_files'] += 1
+                        print(f"✅ 已刪除分塊摘要檔案: {part_file}")
+                    except Exception as e:
+                        cleanup_stats['errors'].append(f"刪除分塊摘要檔案失敗: {str(e)}")
+            
+            # 4. 刪除嵌入向量檔案（包括分塊檔案）
+            embeddings_dir = processed_path / "embeddings"
+            if embeddings_dir.exists():
+                # 主嵌入檔案（可能是 _embedding.json 或 _embeddings.json）
+                for pattern in [f"{filename_stem}_embedding.json", f"{filename_stem}_embeddings.json"]:
+                    main_embedding = embeddings_dir / pattern
+                    if main_embedding.exists():
+                        try:
+                            main_embedding.unlink()
+                            cleanup_stats['embedding_files'] += 1
+                            print(f"✅ 已刪除主嵌入檔案: {main_embedding}")
+                        except Exception as e:
+                            cleanup_stats['errors'].append(f"刪除主嵌入檔案失敗: {str(e)}")
+                
+                # 分塊嵌入檔案（part2, part3, ...）
+                for part_file in embeddings_dir.glob(f"{filename_stem}_part*_embedding.json"):
+                    try:
+                        part_file.unlink()
+                        cleanup_stats['embedding_files'] += 1
+                        print(f"✅ 已刪除分塊嵌入檔案: {part_file}")
+                    except Exception as e:
+                        cleanup_stats['errors'].append(f"刪除分塊嵌入檔案失敗: {str(e)}")
+                
+                # 也處理可能的 _embeddings.json 格式
+                for part_file in embeddings_dir.glob(f"{filename_stem}_part*_embeddings.json"):
+                    try:
+                        part_file.unlink()
+                        cleanup_stats['embedding_files'] += 1
+                        print(f"✅ 已刪除分塊嵌入檔案: {part_file}")
+                    except Exception as e:
+                        cleanup_stats['errors'].append(f"刪除分塊嵌入檔案失敗: {str(e)}")
+            
+            # 5. 刪除其他可能的衍生檔案
+            # 檢查 data 目錄
+            data_dir = processed_path / "data"
+            if data_dir.exists():
+                for data_file in data_dir.glob(f"{filename_stem}.*"):
+                    try:
+                        data_file.unlink()
+                        print(f"✅ 已刪除資料檔案: {data_file}")
+                    except Exception as e:
+                        cleanup_stats['errors'].append(f"刪除資料檔案失敗: {str(e)}")
+            
+            print(f"🗑️ 檔案清理完成: {original_filename}")
+            print(f"   - 原始檔案: {'✅' if cleanup_stats['original_file'] else '❌'}")
+            print(f"   - Markdown: {'✅' if cleanup_stats['markdown_file'] else '❌'}")
+            print(f"   - 摘要檔案: {cleanup_stats['summary_files']} 個")
+            print(f"   - 嵌入檔案: {cleanup_stats['embedding_files']} 個")
+            if cleanup_stats['errors']:
+                print(f"   - 錯誤: {len(cleanup_stats['errors'])} 個")
+            
+            return cleanup_stats
+            
+        except Exception as e:
+            error_msg = f"檔案清理過程發生錯誤: {str(e)}"
+            cleanup_stats['errors'].append(error_msg)
+            print(f"❌ {error_msg}")
+            return cleanup_stats
 
     def get_file_size(self, file_path: str) -> int:
         """取得檔案大小（bytes）"""
