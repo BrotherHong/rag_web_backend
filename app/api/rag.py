@@ -1,112 +1,148 @@
 """RAG 查詢 API 路由"""
 
-import math
+import json
+import time
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy import select, func, desc
+from fastapi import APIRouter, Depends, HTTPException, Header
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload
+from jose import jwt, JWTError
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.config import settings
 from app.models.user import User
-from app.models.file import File
-from app.models.query_history import QueryHistory
 from app.schemas.rag import (
     QueryRequest,
     QueryResponse,
-    DocumentSource,
-    QueryHistoryListResponse,
-    QueryHistoryItem,
-    SearchRequest,
-    SummaryRequest,
-    SummaryResponse
+    DocumentSource
 )
-from app.services.mock_rag_processor import mock_rag_processor
-from app.services.rag_processor_interface import SearchScope, QueryType
+from app.services.rag.rag_engine import RAGEngine
 from app.services.activity import activity_service
 
 router = APIRouter(prefix="/rag", tags=["RAG查詢"])
 
 
+# 可選認證：允許匿名訪問
+async def get_current_user_optional(
+    authorization: Optional[str] = Header(None),
+    db: AsyncSession = Depends(get_db)
+) -> Optional[User]:
+    """
+    可選的用戶認證
+    如果提供 token 則驗證，否則返回 None（匿名用戶）
+    """
+    if not authorization:
+        return None
+    
+    try:
+        token = authorization.replace("Bearer ", "")
+        payload = jwt.decode(
+            token,
+            settings.JWT_SECRET_KEY,
+            algorithms=[settings.JWT_ALGORITHM]
+        )
+        user_id = payload.get("sub")
+        
+        if user_id:
+            result = await db.execute(select(User).where(User.id == int(user_id)))
+            return result.scalar_one_or_none()
+    except (JWTError, ValueError):
+        pass
+    
+    return None
+
+# TODO: Support multiple departments - currently hardcoded to department 1 (人事室)
+DEPARTMENT_ID = 1
+BASE_PATH = f"uploads/{DEPARTMENT_ID}/processed"
+
+# Initialize RAG Engine
+try:
+    rag_engine = RAGEngine(base_path=BASE_PATH)
+    print(f"✅ RAG Engine initialized with base_path: {BASE_PATH}")
+except Exception as e:
+    print(f"⚠️ Warning: Failed to initialize RAG Engine: {e}")
+    rag_engine = None
+
+
 @router.post("/query", response_model=QueryResponse)
 async def query_documents(
     request: QueryRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional)
 ):
-    """RAG 查詢
+    """RAG 查詢（公開端點，無需認證）
     
     - 使用語義搜尋找到相關文檔
-    - 生成基於文檔的答案
-    - 自動記錄查詢歷史
-    - 處室資料隔離
+    - 生成基於文檔的答案（使用真實 LLM）
+    - 自動記錄查詢歷史（如果已登入）
+    - 支援處室資料過濾
     """
+    
     try:
-        # 解析參數
-        scope = SearchScope(request.scope)
-        query_type = QueryType(request.query_type)
+        # 決定處室 ID：優先使用 scope_ids[0]，否則使用已登入用戶的處室
+        department_id = None
+        if request.scope_ids and len(request.scope_ids) > 0:
+            department_id = request.scope_ids[0]
+        elif current_user and current_user.department_id:
+            department_id = current_user.department_id
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="未登入用戶必須指定 scope_ids"
+            )
         
-        # 呼叫 RAG 處理器
-        result = await mock_rag_processor.query(
-            query_text=request.query,
-            scope=scope,
-            scope_ids=request.scope_ids,
-            query_type=query_type,
-            top_k=request.top_k
+        # 動態初始化對應處室的 RAG 引擎
+        base_path = f"uploads/{department_id}/processed"
+        try:
+            dept_rag_engine = RAGEngine(base_path=base_path)
+        except Exception as e:
+            raise HTTPException(
+                status_code=503,
+                detail=f"處室 {department_id} 的 RAG 引擎未初始化，請確認系統配置和 embeddings 資料"
+            )
+        
+        start_time = time.time()
+        
+        # Execute RAG query with real implementation (top_k fixed at 250)
+        result = dept_rag_engine.query(
+            question=request.query,
+            top_k=250,
+            include_similarity_scores=True  # Include scores for metadata
         )
         
-        # 轉換來源格式並查詢檔案資訊
+        processing_time = time.time() - start_time
+        
+        # Convert sources to API format - return all sources from RAG
         sources = []
-        for source in result.sources:
-            # 查詢檔案資訊
-            file = await db.get(File, source.file_id)
-            file_name = file.original_filename if file else f"檔案_{source.file_id}"
-            
-            sources.append(DocumentSource(
-                file_id=source.file_id,
-                file_name=file_name,
-                chunk_id=source.chunk_id,
-                content=source.content,
-                score=source.score
-            ))
+        for source in result['sources']:
+            doc_source = DocumentSource(
+                file_name=source['filename'],
+                source_link=source.get('source_link', ''),
+                download_link=source.get('download_link', '')
+            )
+            sources.append(doc_source)
         
-        # 儲存查詢歷史
-        query_history = QueryHistory(
-            query=result.query,
-            answer=result.answer,
-            sources=[s.model_dump() for s in sources],
-            source_count=len(sources),
-            query_type=request.query_type,
-            scope=request.scope,
-            tokens_used=result.tokens_used,
-            processing_time=result.processing_time,
-            user_id=current_user.id
-        )
+        # Log activity (only if user is authenticated)
+        if current_user:
+            await activity_service.log_activity(
+                db=db,
+                user_id=current_user.id,
+                activity_type="query",
+                description=f"查詢: {request.query[:50]}...",
+                department_id=current_user.department_id,
+                extra_data=json.dumps({
+                    "source_count": len(sources),
+                    "retrieved_docs": result.get('retrieved_docs', 0),
+                    "query_department_id": department_id
+                })
+            )
         
-        db.add(query_history)
-        await db.commit()
-        
-        # 記錄活動
-        await activity_service.log_activity(
-            db=db,
-            user_id=current_user.id,
-            activity_type="query",
-            description=f"查詢: {request.query[:50]}...",
-            department_id=current_user.department_id,
-            extra_data={
-                "query_type": request.query_type,
-                "source_count": len(sources)
-            }
-        )
-        
+        # Return simplified response
         return QueryResponse(
-            query=result.query,
-            answer=result.answer,
-            sources=sources,
-            tokens_used=result.tokens_used,
-            processing_time=result.processing_time,
-            timestamp=result.timestamp
+            query=request.query,
+            answer=result['answer'],
+            sources=sources
         )
         
     except ValueError as e:
@@ -115,242 +151,9 @@ async def query_documents(
             detail=f"參數錯誤: {str(e)}"
         )
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=500,
             detail=f"查詢處理失敗: {str(e)}"
-        )
-
-
-@router.get("/history", response_model=QueryHistoryListResponse)
-async def get_query_history(
-    page: int = Query(1, ge=1, description="頁碼"),
-    limit: int = Query(10, ge=1, le=100, description="每頁數量"),
-    search: Optional[str] = Query(None, description="搜尋查詢內容"),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """取得查詢歷史
-    
-    - 自動過濾處室
-    - 支援搜尋和分頁
-    - 按時間倒序排列
-    """
-    # 建立基礎查詢（自動過濾處室）
-    query = select(QueryHistory).where(
-        QueryHistory.department_id == current_user.department_id
-    )
-    
-    # 搜尋
-    if search:
-        search_pattern = f"%{search}%"
-        query = query.where(
-            QueryHistory.query.ilike(search_pattern)
-        )
-    
-    # 計算總數
-    count_query = select(func.count()).select_from(query.subquery())
-    total = await db.scalar(count_query)
-    
-    # 排序和分頁
-    query = query.order_by(desc(QueryHistory.created_at))
-    query = query.offset((page - 1) * limit).limit(limit)
-    
-    # 執行查詢
-    result = await db.execute(query)
-    history_items = result.scalars().all()
-    
-    return QueryHistoryListResponse(
-        items=[QueryHistoryItem.model_validate(item) for item in history_items],
-        total=total,
-        page=page,
-        pages=math.ceil(total / limit) if total > 0 else 0
-    )
-
-
-@router.get("/history/{history_id}", response_model=QueryResponse)
-async def get_query_history_detail(
-    history_id: int,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """取得查詢歷史詳情
-    
-    - 包含完整的查詢和答案
-    - 包含所有來源文檔
-    - 權限檢查
-    """
-    history = await db.get(QueryHistory, history_id)
-    
-    if not history:
-        raise HTTPException(status_code=404, detail="查詢歷史不存在")
-    
-    # 權限檢查
-    if history.department_id != current_user.department_id and not current_user.is_super_admin:
-        raise HTTPException(status_code=403, detail="無權限查看此查詢歷史")
-    
-    # 轉換來源格式
-    sources = [DocumentSource(**s) for s in history.sources]
-    
-    return QueryResponse(
-        query=history.query,
-        answer=history.answer,
-        sources=sources,
-        tokens_used=history.tokens_used,
-        processing_time=history.processing_time,
-        timestamp=history.created_at
-    )
-
-
-@router.delete("/history/{history_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_query_history(
-    history_id: int,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """刪除查詢歷史
-    
-    - 只能刪除自己的查詢歷史
-    - 管理員可以刪除處室內的所有歷史
-    """
-    history = await db.get(QueryHistory, history_id)
-    
-    if not history:
-        raise HTTPException(status_code=404, detail="查詢歷史不存在")
-    
-    # 權限檢查
-    is_owner = history.user_id == current_user.id
-    is_dept_admin = (
-        current_user.role in ["admin", "super_admin"] and
-        history.department_id == current_user.department_id
-    )
-    
-    if not (is_owner or is_dept_admin):
-        raise HTTPException(status_code=403, detail="無權限刪除此查詢歷史")
-    
-    await db.delete(history)
-    await db.commit()
-    
-    # 記錄活動
-    await activity_service.log_activity(
-        db=db,
-        user_id=current_user.id,
-        activity_type="delete",
-        description=f"刪除查詢歷史: {history.query[:50]}...",
-        department_id=current_user.department_id
-    )
-
-
-@router.post("/search", response_model=QueryResponse)
-async def search_documents(
-    request: SearchRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """語義搜尋文檔
-    
-    - 只返回相似文檔，不生成答案
-    - 支援過濾條件
-    - 處室資料隔離
-    """
-    try:
-        # 呼叫搜尋功能
-        sources = await mock_rag_processor.search_similar_documents(
-            query_text=request.query,
-            top_k=request.top_k,
-            filters=request.filters
-        )
-        
-        # 轉換來源格式
-        document_sources = []
-        for source in sources:
-            # 查詢檔案資訊
-            file = await db.get(File, source.file_id)
-            file_name = file.original_filename if file else f"檔案_{source.file_id}"
-            
-            document_sources.append(DocumentSource(
-                file_id=source.file_id,
-                file_name=file_name,
-                chunk_id=source.chunk_id,
-                content=source.content,
-                score=source.score
-            ))
-        
-        # 記錄活動
-        await activity_service.log_activity(
-            db=db,
-            user_id=current_user.id,
-            activity_type="search",
-            description=f"搜尋文檔: {request.query[:50]}...",
-            department_id=current_user.department_id
-        )
-        
-        return QueryResponse(
-            query=request.query,
-            answer="",  # 搜尋模式不生成答案
-            sources=document_sources,
-            tokens_used=0,
-            processing_time=0.0
-        )
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"搜尋失敗: {str(e)}"
-        )
-
-
-@router.post("/summary", response_model=SummaryResponse)
-async def get_document_summary(
-    request: SummaryRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """取得文檔摘要
-    
-    - 生成文檔內容摘要
-    - 需要檔案已經向量化
-    - 權限檢查
-    """
-    # 查詢檔案
-    file = await db.get(File, request.file_id)
-    
-    if not file:
-        raise HTTPException(status_code=404, detail="檔案不存在")
-    
-    # 權限檢查
-    if file.department_id != current_user.department_id and not current_user.is_super_admin:
-        raise HTTPException(status_code=403, detail="無權限查看此檔案")
-    
-    # 檢查是否已向量化
-    if not file.is_vectorized:
-        raise HTTPException(status_code=400, detail="檔案尚未處理完成")
-    
-    try:
-        # 生成摘要
-        summary = await mock_rag_processor.get_document_summary(request.file_id)
-        
-        if not summary:
-            raise HTTPException(status_code=404, detail="無法生成摘要")
-        
-        # 記錄活動
-        await activity_service.log_activity(
-            db=db,
-            user_id=current_user.id,
-            activity_type="view",
-            description=f"查看文檔摘要: {file.original_filename}",
-            department_id=current_user.department_id
-        )
-        
-        return SummaryResponse(
-            file_id=file.id,
-            file_name=file.original_filename,
-            summary=summary
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"生成摘要失敗: {str(e)}"
         )
