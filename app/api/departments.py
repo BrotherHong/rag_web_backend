@@ -80,6 +80,7 @@ async def list_departments(
         dept_dict = {
             "id": dept.id,
             "name": dept.name,
+            "slug": dept.slug,
             "description": dept.description,
             "color": dept.color,
             "user_count": user_count,
@@ -120,6 +121,49 @@ async def get_department(
         )
     
     return department
+
+
+@router.get("/by-slug/{slug}", response_model=DepartmentResponse, summary="透過 slug 取得處室詳情")
+async def get_department_by_slug(
+    slug: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    根據 slug 取得處室詳細資訊
+
+    - **slug**: 處室的 URL 友善識別碼
+    """
+    result = await db.execute(select(Department).where(Department.slug == slug))
+    department = result.scalar_one_or_none()
+
+    if not department:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="處室不存在"
+        )
+
+    # 計算使用者數量
+    user_count = await db.scalar(
+        select(func.count()).where(User.department_id == department.id)
+    ) or 0
+    
+    # 計算檔案數量
+    file_count = await db.scalar(
+        select(func.count()).where(File.department_id == department.id)
+    ) or 0
+    
+    # 返回完整資訊
+    return {
+        "id": department.id,
+        "name": department.name,
+        "slug": department.slug,
+        "description": department.description,
+        "color": department.color,
+        "user_count": user_count,
+        "file_count": file_count,
+        "created_at": department.created_at,
+        "updated_at": department.updated_at
+    }
 
 
 @router.post(

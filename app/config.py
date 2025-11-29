@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "./uploads"  # 實際儲存路徑
     
     # CORS
-    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
+    CORS_ORIGINS: str = "http://localhost:5174,http://localhost:3000"
     
     # Ollama LLM 設定
     OLLAMA_BASE_URL: str = "https://primehub.aic.ncku.edu.tw/console/apps/ollama-0-11-10-z0s7s"
