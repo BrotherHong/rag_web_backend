@@ -10,10 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.file import File, FileStatus
 from app.services.file_storage import file_storage
-from app.utils.document_converter import DocumentConverter
-from app.utils.summarizer import SummaryProcessor
-from app.utils.embedding_processor import EmbeddingProcessor
-from app.models.llm.ollama_client import OllamaClient
+from app.services.document_processing import (
+    DocumentConverter,
+    SummaryProcessor,
+    EmbeddingProcessor
+)
+from app.services.llm.ollama_client import OllamaClient
 
 
 class FileProcessingService:

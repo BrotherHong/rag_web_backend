@@ -5,8 +5,8 @@ RAG引擎 - 整合檢索和生成（Web Backend版本）
 
 import os
 from typing import List, Dict, Optional
-from app.models.llm.ollama_client import OllamaClient
-from app.models.llm.prompts.rag import RAG_ANSWER_PROMPT, RAG_NO_RESULTS_PROMPT
+from app.services.llm.ollama_client import OllamaClient
+from app.services.llm.prompts.rag import RAG_ANSWER_PROMPT, RAG_NO_RESULTS_PROMPT
 from .vector_store import VectorStore
 from .reranker import Reranker
 

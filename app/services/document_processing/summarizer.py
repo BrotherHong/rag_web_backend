@@ -5,8 +5,8 @@
 import json
 from pathlib import Path
 from typing import Dict, Optional, List, Tuple
-from app.models.llm.ollama_client import OllamaClient
-from app.models.llm.prompts import (
+from app.services.llm.ollama_client import OllamaClient
+from app.services.llm.prompts import (
     RAG_DOCUMENT_SUMMARY,
     DOCUMENT_CLASSIFICATION,
     FORM_DOCUMENT_SUMMARY

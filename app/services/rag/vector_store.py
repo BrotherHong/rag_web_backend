@@ -6,7 +6,7 @@
 import os
 import json
 from typing import List, Dict, Optional, Tuple
-from app.models.embedding import EmbeddingProcessor
+from app.services.document_processing import EmbeddingProcessor
 
 
 class VectorStore:

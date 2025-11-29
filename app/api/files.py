@@ -34,8 +34,7 @@ from app.schemas.file import (
 )
 from app.services.file_storage import file_storage
 from app.services.activity import activity_service
-from app.services.mock_file_processor import mock_file_processor
-from app.services.file_processor_interface import ProcessingStatus
+from app.models.file import FileStatus as ProcessingStatus
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -247,48 +246,12 @@ async def upload_file(
         department_id=current_user.department_id
     )
     
-    # 7. 觸發檔案處理（使用模擬處理器進行演示）
-    # 在生產環境中，這應該是非同步的 Celery 任務
-    # process_file_task.delay(db_file.id)
-    try:
-        # 記錄處理開始時間
-        db_file.processing_started_at = datetime.now()
-        db_file.status = "processing"
-        await db.commit()
-        
-        # 呼叫模擬處理器（這是同步演示，實際應為背景任務）
-        processing_result = await mock_file_processor.process_file(
-            file_id=db_file.id,
-            file_path=file_path,
-            file_type=db_file.file_type,
-            options={"description": description}
-        )
-        
-        # 更新檔案狀態
-        db_file.processing_completed_at = datetime.now()
-        
-        if processing_result.status == ProcessingStatus.COMPLETED:
-            db_file.status = "active"
-            db_file.chunk_count = processing_result.chunk_count
-            db_file.vector_count = processing_result.vector_count
-            db_file.is_vectorized = True
-            db_file.processing_progress = 100
-            db_file.processing_step = "completed"
-        elif processing_result.status == ProcessingStatus.FAILED:
-            db_file.status = "failed"
-            db_file.error_message = processing_result.error_message
-            db_file.processing_step = "failed"
-        
-        await db.commit()
-        await db.refresh(db_file)
-        
-    except Exception as e:
-        # 處理失敗不影響上傳，只記錄錯誤
-        db_file.status = "failed"
-        db_file.error_message = str(e)
-        db_file.processing_completed_at = datetime.now()
-        await db.commit()
-        print(f"檔案處理失敗: {str(e)}")
+    # 7. 設置檔案為待處理狀態
+    db_file.status = ProcessingStatus.PENDING
+    db_file.processing_step = "pending"
+    db_file.processing_progress = 0
+    await db.commit()
+    await db.refresh(db_file)
     
     return FileUploadResponse(
         id=db_file.id,
