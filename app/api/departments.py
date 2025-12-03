@@ -184,7 +184,9 @@ async def create_department(
     需要系統管理員權限
     
     - **name**: 處室名稱（唯一）
+    - **slug**: URL 識別碼（唯一，例: hr, acc, it）
     - **description**: 處室描述（可選）
+    - **color**: 主題顏色（選填，預設藍色）
     """
     # 檢查名稱是否已存在
     result = await db.execute(select(Department).where(Department.name == department_data.name))
@@ -192,6 +194,14 @@ async def create_department(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="處室名稱已存在"
+        )
+    
+    # 檢查 slug 是否已存在
+    result = await db.execute(select(Department).where(Department.slug == department_data.slug))
+    if result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"URL 識別碼 '{department_data.slug}' 已被使用"
         )
     
     # 建立處室
