@@ -3,6 +3,7 @@
 """
 
 import asyncio
+import os
 import shutil
 from pathlib import Path
 from typing import Dict, List
@@ -87,14 +88,31 @@ class FileProcessingService:
                 results['failed'] += 1
                 results['errors'].append(f"檔案 ID {file_id}: {str(e)}")
                 
-                # 更新為失敗狀態
+                # 更新為失敗狀態並清理檔案
                 try:
                     file_record = await db.get(File, file_id)
                     if file_record:
+                        print(f"\n❌ 處理失敗，開始清理檔案 ID {file_id}: {file_record.original_filename}")
+                        
+                        # 標記為失敗
                         file_record.status = FileStatus.FAILED
                         file_record.error_message = str(e)
+                        
+                        # 刪除實體檔案
+                        from app.services.file_storage import file_storage
+                        if file_record.file_path and os.path.exists(file_record.file_path):
+                            try:
+                                os.remove(file_record.file_path)
+                                print(f"🗑️ 已刪除失敗的原始檔案: {file_record.file_path}")
+                            except Exception as del_error:
+                                print(f"⚠️ 刪除失敗檔案時出錯: {del_error}")
+                        
+                        # 刪除資料庫記錄
+                        await db.delete(file_record)
                         await db.commit()
-                except:
+                        print(f"🗑️ 已刪除失敗的資料庫記錄 ID {file_id}")
+                except Exception as cleanup_error:
+                    print(f"⚠️ 清理失敗檔案時出錯: {cleanup_error}")
                     pass
         
         return results
@@ -153,7 +171,10 @@ class FileProcessingService:
             file_record.processing_progress = 30
             await db.commit()
             
-            temp_md_path = temp_dir / "output_md" / f"{file_path.stem}.md"
+            # 生成 Markdown 檔名：使用資料庫中的 filename（已清理特殊字元）
+            # 例如：QA.pdf → QA.md
+            md_filename = f"{Path(file_record.filename).stem}.md"
+            temp_md_path = temp_dir / "output_md" / md_filename
             temp_md_path.parent.mkdir(parents=True, exist_ok=True)
             
             success = await asyncio.to_thread(
@@ -206,7 +227,8 @@ class FileProcessingService:
             success = await asyncio.to_thread(
                 self.embedder.process_summary_file,
                 temp_summary_path,
-                temp_embedding_path
+                temp_embedding_path,
+                file_record.original_filename  # ✅ 傳入原始檔名
             )
             
             if not success:
@@ -230,7 +252,8 @@ class FileProcessingService:
                 success = await asyncio.to_thread(
                     self.embedder.process_summary_file,
                     part_summary_file,
-                    part_embedding_file
+                    part_embedding_file,
+                    file_record.original_filename  # ✅ 傳入原始檔名
                 )
                 
                 if success:

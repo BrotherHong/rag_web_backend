@@ -182,11 +182,20 @@ async def batch_upload(
                 if category:
                     category_id = category.id
             
-            # 儲存檔案
-            unique_filename, file_path, file_size = await file_storage.save_upload_file(
-                file,
-                current_user.department_id
-            )
+            # 儲存檔案（檢查資料庫重複）
+            try:
+                unique_filename, file_path, file_size = await file_storage.save_upload_file(
+                    file,
+                    current_user.department_id,
+                    db=db,
+                    original_filename=file.filename
+                )
+            except ValueError as e:
+                # 檔案已存在
+                task["files"][idx]["status"] = "failed"
+                task["files"][idx]["error"] = str(e)
+                task["failedFiles"] += 1
+                continue
             
             # 建立資料庫記錄
             ext = os.path.splitext(file.filename)[1].lower()
@@ -520,54 +529,36 @@ async def check_duplicates(
     results = []
     
     for filename in request.filenames:
-        # 檢查完全重複的檔案
-        exact_match_query = select(FileModel).options(
-            joinedload(FileModel.category)
-        ).where(
-            FileModel.department_id == current_user.department_id,
-            FileModel.original_filename == filename
-        )
-        exact_match_result = await db.execute(exact_match_query)
-        exact_match = exact_match_result.scalar_one_or_none()
+        # 取得檔名基礎（不含副檔名）
+        base_name = filename.rsplit('.', 1)[0]  # "Q&A"
         
-        # 查找相關檔案（檔名相似但不完全相同）
-        base_name = filename.rsplit('.', 1)[0]  # 去掉副檔名
-        related_query = select(FileModel).options(
+        # 檢查是否已有相同檔名基礎的檔案（不管副檔名）
+        conflict_query = select(FileModel).options(
             joinedload(FileModel.category)
         ).where(
             FileModel.department_id == current_user.department_id,
-            FileModel.original_filename.like(f"%{base_name}%"),
-            FileModel.original_filename != filename
-        ).limit(5)
-        related_result = await db.execute(related_query)
-        related_files = related_result.scalars().all()
+            FileModel.original_filename.like(f"{base_name}.%")  # Q&A.pdf, Q&A.docx, Q&A.txt
+        )
+        result = await db.execute(conflict_query)
+        conflict_file = result.scalar_one_or_none()
         
         # 構建回應
         file_result = {
             "fileName": filename,
-            "isDuplicate": exact_match is not None,
+            "isDuplicate": conflict_file is not None,
             "duplicateFile": None,
             "relatedFiles": [],
-            "suggestReplace": exact_match is not None
+            "suggestReplace": conflict_file is not None
         }
         
-        if exact_match:
+        if conflict_file:
             file_result["duplicateFile"] = {
-                "id": exact_match.id,
-                "name": exact_match.original_filename,
-                "size": f"{exact_match.file_size / 1024:.1f} KB" if exact_match.file_size else "未知",
-                "uploadDate": exact_match.created_at.strftime("%Y-%m-%d %H:%M"),
-                "category": exact_match.category.name if exact_match.category else "未分類"
+                "id": conflict_file.id,
+                "name": conflict_file.original_filename,
+                "size": f"{conflict_file.file_size / 1024:.1f} KB" if conflict_file.file_size else "未知",
+                "uploadDate": conflict_file.created_at.strftime("%Y-%m-%d %H:%M"),
+                "category": conflict_file.category.name if conflict_file.category else "未分類"
             }
-        
-        for related_file in related_files:
-            file_result["relatedFiles"].append({
-                "id": related_file.id,
-                "name": related_file.original_filename,
-                "size": f"{related_file.file_size / 1024:.1f} KB" if related_file.file_size else "未知",
-                "uploadDate": related_file.created_at.strftime("%Y-%m-%d %H:%M"),
-                "category": related_file.category.name if related_file.category else "未分類"
-            })
         
         results.append(file_result)
     

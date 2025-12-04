@@ -113,13 +113,30 @@ async def query_documents(
         
         processing_time = time.time() - start_time
         
-        # Convert sources to API format - return all sources from RAG
+        # Convert sources to API format and fetch file_id from database
         sources = []
         for source in result['sources']:
+            original_filename = source['filename']
+            
+            # Query database to find file_id
+            from app.models.file import File as FileModel
+            file_query = select(FileModel).where(
+                FileModel.department_id == department_id,
+                FileModel.original_filename == original_filename
+            )
+            file_result = await db.execute(file_query)
+            file_record = file_result.scalar_one_or_none()
+            
+            if not file_record:
+                # This should not happen - file record must exist for processed files
+                print(f"⚠️ Warning: File record not found for {original_filename}")
+                continue
+            
             doc_source = DocumentSource(
-                file_name=source['filename'],
+                file_id=file_record.id,
+                file_name=original_filename,
                 source_link=source.get('source_link', ''),
-                download_link=source.get('download_link', '')
+                download_link=f"/public/files/{file_record.id}/download"  # 移除 /api 前綴，由前端的 BASE_URL 提供
             )
             sources.append(doc_source)
         

@@ -66,7 +66,6 @@ class SummaryProcessor:
             # 建立主摘要資料
             summary_data = {
                 'filename': filename,
-                'original_path': file_path,
                 'summary': summary,
                 'summary_length': len(summary),
                 'doc_type': doc_type,
@@ -221,7 +220,6 @@ class SummaryProcessor:
                 
                 chunk_summary_data = {
                     'filename': chunk_filename,
-                    'original_path': file_path,
                     'summary': chunk_summary,
                     'summary_length': len(chunk_summary),
                     'doc_type': doc_type,

@@ -23,6 +23,7 @@ class QueryRequest(BaseModel):
 class DocumentSource(BaseModel):
     """文檔來源"""
     
+    file_id: Optional[int] = Field(default=None, description="檔案 ID（用於下載）")
     file_name: str = Field(..., description="檔案名稱")
     source_link: str = Field(default="", description="原始連結")
     download_link: str = Field(default="", description="下載連結")
@@ -30,9 +31,10 @@ class DocumentSource(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
+                "file_id": 123,
                 "file_name": "系統操作手冊.pdf",
                 "source_link": "https://example.com/doc",
-                "download_link": "https://example.com/download/doc.pdf"
+                "download_link": "/api/files/123/download"
             }
         }
 

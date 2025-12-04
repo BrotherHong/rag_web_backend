@@ -66,17 +66,40 @@ class FileStorageService:
     async def save_upload_file(
         self,
         upload_file: UploadFile,
-        department_id: int
+        department_id: int,
+        db: AsyncSession = None,
+        original_filename: str = None
     ) -> tuple[str, str, int]:
         """儲存上傳的檔案到 unprocessed 目錄
         
         Args:
             upload_file: FastAPI UploadFile 物件
             department_id: 處室 ID
+            db: 資料庫 session（用於檢查重複）
+            original_filename: 原始檔名（用於檢查重複）
             
         Returns:
             tuple: (unique_filename, file_path, file_size)
+            
+        Raises:
+            ValueError: 檔名已存在
         """
+        from sqlalchemy import select
+        from app.models import File as FileModel
+        
+        # 檢查資料庫是否已有相同檔名基礎的檔案
+        if db is not None and original_filename:
+            base_name = original_filename.rsplit('.', 1)[0]
+            check_query = select(FileModel).where(
+                FileModel.department_id == department_id,
+                FileModel.original_filename.like(f"{base_name}.%")
+            )
+            result = await db.execute(check_query)
+            existing_file = result.scalar_one_or_none()
+            
+            if existing_file:
+                raise ValueError(f"檔案「{existing_file.original_filename}」已存在，請先刪除舊檔或更改檔名後再上傳")
+        
         # 生成檔名
         unique_filename = self.generate_unique_filename(upload_file.filename)
         
@@ -84,12 +107,9 @@ class FileStorageService:
         dept_path = self._get_department_path(department_id, "unprocessed")
         file_path = dept_path / unique_filename
         
-        # 如果檔案已存在，加上時間戳記避免衝突
+        # 如果實體檔案已存在（不應該發生，但保留檢查）
         if file_path.exists():
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            name, ext = os.path.splitext(unique_filename)
-            unique_filename = f"{name}_{timestamp}{ext}"
-            file_path = dept_path / unique_filename
+            raise ValueError(f"儲存路徑衝突：{file_path}")
         
         # 儲存檔案
         file_size = 0
@@ -178,51 +198,14 @@ class FileStorageService:
             original_filename = file_record.original_filename
             file_path = file_record.file_path
             
-            # 從實際檔案路徑推斷檔名主幹，而不是僅從 original_filename
-            # 因為處理後的檔案可能有時間戳後綴
-            if file_path and Path(file_path).exists():
-                # 從檔案路徑取得實際檔名主幹
-                filename_stem = Path(file_path).stem
-            else:
-                # 如果檔案不存在，嘗試從 original_filename 推斷
-                filename_stem = Path(original_filename).stem
-            
-            # 特別處理：如果在 processed 目錄中找不到以 filename_stem 命名的檔案，
-            # 嘗試查找包含原始檔名（去掉副檔名）的檔案
-            processed_path = self._get_department_path(department_id, "processed")
-            
-            # 先用原始方法查找
-            test_summary = processed_path / "summaries" / f"{filename_stem}_summary.json"
-            test_embedding = processed_path / "embeddings" / f"{filename_stem}_embedding.json"
-            
-            if not test_summary.exists() and not test_embedding.exists():
-                # 如果找不到，嘗試在目錄中搜尋包含原始檔名的檔案
-                original_stem = Path(original_filename).stem
-                summary_dir = processed_path / "summaries"
-                
-                if summary_dir.exists():
-                    # 搜尋以原始檔名開頭的摘要檔案，優先找主檔案（不含 _part）
-                    matching_files = list(summary_dir.glob(f"{original_stem}*_summary.json"))
-                    if matching_files:
-                        # 優先選擇主檔案（不含 _part 的）
-                        main_files = [f for f in matching_files if "_part" not in f.stem]
-                        if main_files:
-                            # 從主檔案推斷實際的檔名主幹
-                            actual_filename = main_files[0].stem.replace("_summary", "")
-                            filename_stem = actual_filename
-                            print(f"🔍 從主檔案推斷檔名主幹: {filename_stem}")
-                        else:
-                            # 如果沒有主檔案，從分塊檔案推斷
-                            actual_filename = matching_files[0].stem.replace("_summary", "")
-                            # 移除 _part 部分，獲得基本檔名
-                            if "_part" in actual_filename:
-                                filename_stem = actual_filename.rsplit("_part", 1)[0]
-                            else:
-                                filename_stem = actual_filename
-                            print(f"🔍 從分塊檔案推斷檔名主幹: {filename_stem}")
+            # 使用資料庫中的 filename（已清理特殊字元）作為檔名主幹
+            # 這樣可以精確匹配，避免誤刪其他檔案
+            # 例如：filename="QA.pdf" → filename_stem="QA"
+            filename_stem = Path(file_record.filename).stem
             
             print(f"📂 使用檔名主幹進行清理: {filename_stem}")
             print(f"📂 原始檔名: {original_filename}")
+            print(f"📂 資料庫檔名: {file_record.filename}")
             
             # 取得處室路徑
             dept_path = self._get_department_path(department_id)

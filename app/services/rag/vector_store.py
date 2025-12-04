@@ -64,6 +64,7 @@ class VectorStore:
                             embeddings.append(embedding)
                             documents.append({
                                 'filename': embedding_data.get('filename', ''),
+                                'original_filename': embedding_data.get('original_filename', embedding_data.get('filename', '')),  # ✅ 新增：原始檔名
                                 'original_path': embedding_data.get('original_path', ''),
                                 'summary_length': embedding_data.get('summary_length', 0),
                                 'embedding_file': file_path,

@@ -92,6 +92,7 @@ class RAGEngine:
         for doc_result in reranked_docs[:self.max_context_docs]:
             doc_info = doc_result['document']
             filename = doc_info['filename']
+            original_filename = doc_info.get('original_filename', filename)  # ✅ 優先使用 original_filename
             
             # 動態載入路徑資訊
             doc_content = self.vector_store.get_document_content(filename)
@@ -100,7 +101,7 @@ class RAGEngine:
             download_link = doc_content['download_link'] if doc_content else ''
             
             source = {
-                'filename': filename,
+                'filename': original_filename,  # ✅ 使用原始檔名
                 'original_path': original_path,
                 'source_link': source_link,
                 'download_link': download_link
@@ -136,16 +137,17 @@ class RAGEngine:
         for i, doc in enumerate(top_docs, 1):
             document = doc['document']
             filename = document['filename']
+            original_filename = document.get('original_filename', filename)  # ✅ 優先使用原始檔名
             
             # 從 vector_store 獲取文檔完整內容
             doc_content = self.vector_store.get_document_content(filename)
             if doc_content and doc_content.get('original_content'):
                 content = doc_content['original_content']
-                context_parts.append(f"文檔{i}（{filename}）：\n{content}\n")
+                context_parts.append(f"文檔{i}（{original_filename}）：\n{content}\n")  # ✅ 使用原始檔名
             else:
                 # 如果無法獲取內容，使用摘要
                 summary = doc.get('summary', '')
-                context_parts.append(f"文檔{i}（{filename}）：\n{summary}\n")
+                context_parts.append(f"文檔{i}（{original_filename}）：\n{summary}\n")  # ✅ 使用原始檔名
         
         return "\n".join(context_parts)
     

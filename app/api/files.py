@@ -206,7 +206,15 @@ async def upload_file(
     try:
         unique_filename, file_path, file_size = await file_storage.save_upload_file(
             file, 
-            current_user.department_id
+            current_user.department_id,
+            db=db,
+            original_filename=file.filename
+        )
+    except ValueError as e:
+        # 檔案已存在
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
         )
     except Exception as e:
         raise HTTPException(
@@ -308,10 +316,28 @@ async def batch_upload_files(
                 continue
             
             # 2. 儲存檔案
-            unique_filename, file_path, file_size = await file_storage.save_upload_file(
-                file, 
-                current_user.department_id
-            )
+            try:
+                unique_filename, file_path, file_size = await file_storage.save_upload_file(
+                    file, 
+                    current_user.department_id,
+                    db=db,
+                    original_filename=file.filename
+                )
+            except ValueError as e:
+                # 檔案已存在
+                results.append({
+                    "filename": file.filename,
+                    "success": False,
+                    "error": str(e)
+                })
+                continue
+            except Exception as e:
+                results.append({
+                    "filename": file.filename,
+                    "success": False,
+                    "error": f"檔案儲存失敗: {str(e)}"
+                })
+                continue
             
             # 3. 取得檔案資訊
             ext = os.path.splitext(file.filename)[1].lower()

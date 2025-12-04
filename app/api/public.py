@@ -1,6 +1,8 @@
 """公開 API 路由（無需認證）"""
 
+import os
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Any
 
@@ -120,6 +122,38 @@ async def get_public_system_info():
             "support_phone": "(06) 275-7575"
         }
     }
+
+
+@router.get("/public/files/{file_id}/download")
+async def download_file_public(
+    file_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    公開下載端點（無需認證）
+    
+    用於 RAG 查詢結果的檔案下載
+    """
+    from app.models.file import File as FileModel
+    
+    # 取得檔案記錄
+    file = await db.get(FileModel, file_id)
+    if not file:
+        raise HTTPException(status_code=404, detail="檔案不存在")
+    
+    # 構建 processed/data 路徑
+    file_path = f"uploads/{file.department_id}/processed/data/{file.filename}"
+    
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="檔案實體不存在")
+    
+    # 返回檔案（使用原始檔名）
+    # 注意：公開下載不記錄活動，因為 activities 表的 user_id 是必填
+    return FileResponse(
+        path=file_path,
+        filename=file.original_filename,
+        media_type=file.mime_type or "application/octet-stream"
+    )
 
 
 @router.get("/public/welcome")

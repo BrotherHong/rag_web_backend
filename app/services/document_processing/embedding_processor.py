@@ -89,7 +89,8 @@ class EmbeddingProcessor:
     def process_summary_file(
         self,
         summary_json_path: Path,
-        output_json_path: Path
+        output_json_path: Path,
+        original_filename: str = None
     ) -> bool:
         """
         處理摘要檔案生成嵌入
@@ -97,6 +98,7 @@ class EmbeddingProcessor:
         參數:
             summary_json_path: 摘要 JSON 檔案路徑
             output_json_path: 輸出嵌入 JSON 路徑
+            original_filename: 原始檔名（例如 "Q&A.pdf"）
             
         返回:
             bool: 是否成功
@@ -121,6 +123,7 @@ class EmbeddingProcessor:
             # 建立嵌入資料
             embedding_data = {
                 'filename': summary_data.get('filename', ''),
+                'original_filename': original_filename or summary_data.get('filename', ''),  # ✅ 新增：原始檔名
                 'summary_length': summary_data.get('summary_length', 0),
                 'doc_type': summary_data.get('doc_type', 'Info Mode'),
                 'embedding': embedding,
