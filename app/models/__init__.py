@@ -8,6 +8,7 @@ from app.models.category import Category
 from app.models.activity import Activity, ActivityType
 from app.models.query_history import QueryHistory
 from app.models.system_setting import SystemSetting
+from app.models.faq import FAQ
 
 __all__ = [
     "Base",
@@ -21,4 +22,5 @@ __all__ = [
     "ActivityType",
     "QueryHistory",
     "SystemSetting",
+    "FAQ",
 ]

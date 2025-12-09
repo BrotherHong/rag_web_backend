@@ -1,101 +1,86 @@
 """公開 API 路由（無需認證）"""
 
 import os
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List, Dict, Any
+from sqlalchemy import select
+from typing import List, Dict, Any, Optional
 
 from app.core.database import get_db
+from app.models.faq import FAQ
 
 router = APIRouter(prefix="", tags=["公開 API"])
 
 
 @router.get("/faq/list")
-async def get_faq_list(db: AsyncSession = Depends(get_db)):
+async def get_faq_list(
+    department_id: int = Query(..., description="處室 ID（必須）"),
+    limit: Optional[int] = Query(None, description="限制返回的問題數量"),
+    category: Optional[str] = Query(None, description="按分類過濾問題"),
+    db: AsyncSession = Depends(get_db)
+):
     """
     獲取常見問題列表（公開端點）
     
-    返回常見問題和解答
+    參數:
+        - department_id: 處室 ID（必須）
+        - limit: 限制返回的問題數量，不傳則返回全部
+        - category: 按分類過濾問題（可選）
+    
+    返回常見問題列表，適用於：
+    - 首頁展示：傳入 limit=4 獲取前幾個問題
+    - 聊天頁快速問題：不傳 limit 獲取完整列表
     """
-    # TODO: 從資料庫獲取 FAQ
-    # 目前返回範例資料
-    faq_list = [
-        {
-            "id": 1,
-            "category": "基本操作",
-            "question": "如何上傳文件？",
-            "answer": "請點擊上傳按鈕，選擇您的文件，系統支援 PDF、Word 和 TXT 格式。",
-            "order": 1
-        },
-        {
-            "id": 2,
-            "category": "基本操作",
-            "question": "如何進行查詢？",
-            "answer": "在搜尋框中輸入您的問題，系統會自動搜尋相關文檔並提供答案。",
-            "order": 2
-        },
-        {
-            "id": 3,
-            "category": "系統功能",
-            "question": "系統支援哪些文件格式？",
-            "answer": "系統支援 PDF、Word（.docx）和純文字（.txt）格式的文件。",
-            "order": 3
-        },
-        {
-            "id": 4,
-            "category": "系統功能",
-            "question": "如何查看歷史查詢？",
-            "answer": "登入後，您可以在「歷史記錄」頁面查看過去的查詢記錄。",
-            "order": 4
+    try:
+        # 構建查詢 - 只返回指定處室的啟用 FAQ
+        query = select(FAQ).where(
+            FAQ.is_active == True,
+            FAQ.department_id == department_id
+        )
+        
+        # 如果有分類過濾
+        if category:
+            query = query.where(FAQ.category == category)
+        
+        # 按 order 排序
+        query = query.order_by(FAQ.order.asc(), FAQ.id.asc())
+        
+        # 執行查詢
+        result = await db.execute(query)
+        faqs = result.scalars().all()
+        
+        # 轉換為字典列表
+        faq_list = [
+            {
+                "id": faq.id,
+                "category": faq.category,
+                "question": faq.question,
+                "description": faq.description,
+                "answer": faq.answer,
+                "icon": faq.icon,
+                "order": faq.order
+            }
+            for faq in faqs
+        ]
+        
+        # 如果有限制數量
+        if limit is not None and limit > 0:
+            faq_list = faq_list[:limit]
+        
+        return {
+            "success": True,
+            "data": faq_list,
+            "total": len(faq_list)
         }
-    ]
-    
-    return {
-        "success": True,
-        "data": faq_list
-    }
-
-
-@router.get("/questions/quick")
-async def get_quick_questions(db: AsyncSession = Depends(get_db)):
-    """
-    獲取快速問題列表（公開端點）
-    
-    返回常用的快速問題範例
-    """
-    # TODO: 從資料庫獲取快速問題，可以根據處室過濾
-    quick_questions = [
-        {
-            "id": 1,
-            "question": "請假規定是什麼？",
-            "category": "人事",
-            "icon": "📋"
-        },
-        {
-            "id": 2,
-            "question": "如何申請加班費？",
-            "category": "人事",
-            "icon": "💰"
-        },
-        {
-            "id": 3,
-            "question": "年假天數如何計算？",
-            "category": "人事",
-            "icon": "📅"
-        },
-        {
-            "id": 4,
-            "question": "出差申請流程？",
-            "category": "人事",
-            "icon": "✈️"
+    except Exception as e:
+        # 如果資料庫查詢失敗，返回空列表而不是錯誤
+        print(f"Error fetching FAQs: {e}")
+        return {
+            "success": True,
+            "data": [],
+            "total": 0
         }
-    ]
-    
-    return {
-        "success": True,
-        "data": quick_questions
-    }
 
 
 @router.get("/public/info")
