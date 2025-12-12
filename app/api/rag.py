@@ -58,7 +58,7 @@ BASE_PATH = f"uploads/{DEPARTMENT_ID}/processed"
 
 # Initialize RAG Engine
 try:
-    rag_engine = RAGEngine(base_path=BASE_PATH)
+    rag_engine = RAGEngine(base_path=BASE_PATH, debug_mode=True)  # 開啟 debug 模式
     print(f"✅ RAG Engine initialized with base_path: {BASE_PATH}")
 except Exception as e:
     print(f"⚠️ Warning: Failed to initialize RAG Engine: {e}")
@@ -95,7 +95,7 @@ async def query_documents(
         # 動態初始化對應處室的 RAG 引擎
         base_path = f"uploads/{department_id}/processed"
         try:
-            dept_rag_engine = RAGEngine(base_path=base_path)
+            dept_rag_engine = RAGEngine(base_path=base_path, debug_mode=True)  # 開啟 debug 模式
         except Exception as e:
             raise HTTPException(
                 status_code=503,

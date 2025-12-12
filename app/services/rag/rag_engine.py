@@ -21,7 +21,8 @@ class RAGEngine:
                  base_url="https://primehub.aic.ncku.edu.tw/console/apps/ollama-0-11-10-z0s7s",
                  model="qwen2.5:32b",
                  similarity_threshold=0.1,
-                 max_context_docs=3):
+                 max_context_docs=3,
+                 debug_mode=False):
         """
         初始化RAG引擎
         
@@ -31,13 +32,36 @@ class RAGEngine:
             model: 用於生成回答的模型
             similarity_threshold: 相似度閾值
             max_context_docs: 用於上下文的最大文檔數
+            debug_mode: 是否輸出 debug log
         """
         self.client = OllamaClient(base_url=base_url, model=model)
         self.vector_store = VectorStore(base_path=base_path)
         self.similarity_threshold = similarity_threshold
         self.max_context_docs = max_context_docs
         self.reranker = Reranker()
+        self.debug_mode = debug_mode
         
+    def _deduplicate_docs_by_file(self, top_docs: List[Dict]) -> List[Dict]:
+        """按檔案去重，合併相同檔案的多個chunks"""
+        from collections import OrderedDict
+        
+        file_to_docs = OrderedDict()
+        
+        for doc in top_docs:
+            filename = doc['document'].get('original_filename') or doc['document']['filename']
+            
+            if filename not in file_to_docs:
+                file_to_docs[filename] = {
+                    'document': doc['document'],
+                    'similarity': doc['similarity'],
+                    'score': doc['score'],
+                    'all_chunks': [doc]
+                }
+            else:
+                file_to_docs[filename]['all_chunks'].append(doc)
+        
+        return list(file_to_docs.values())
+    
     def query(self, question: str, 
               top_k: int = 250, 
               include_similarity_scores: bool = False) -> Dict:
@@ -79,17 +103,37 @@ class RAGEngine:
         } for doc in similar_docs]
         reranked_docs = self.reranker.rerank(question, candidates)
         
+        # 顯示 Rerank 後的 Top 3
+        print(f"\n=== Rerank 結果 (Top {min(3, len(reranked_docs))}) ===")
+        for i, doc in enumerate(reranked_docs[:3], 1):
+            filename = doc['document'].get('original_filename') or doc['document']['filename']
+            print(f"  {i}. {filename} (Similarity: {doc['similarity']:.4f}, Rerank Score: {doc['score']:.4f})")
+        
         # 2. 使用 top N 文檔構建上下文
         top_docs = reranked_docs[:self.max_context_docs]
         
+        # 2.5 去重合併相同檔案的多個 chunks
+        deduplicated_docs = self._deduplicate_docs_by_file(top_docs)
+        
         # 3. 生成詳細回答
-        context = self._build_context(top_docs)
+        context = self._build_context(deduplicated_docs)
         prompt = RAG_ANSWER_PROMPT.format(query=question, context=context)
+        
+        if self.debug_mode:
+            print(f"\n[DEBUG] 模型輸入 Prompt:")
+            print(prompt)
+            print("-" * 80)
+        
         response = self.client.generate(prompt)
         
-        # 4. 整理結果
+        if self.debug_mode:
+            print(f"\n[DEBUG] 模型原始輸出:")
+            print(response)
+            print("=" * 80)
+        
+        # 4. 整理結果（使用去重後的文檔）
         sources = []
-        for doc_result in reranked_docs[:self.max_context_docs]:
+        for doc_result in deduplicated_docs:
             doc_info = doc_result['document']
             filename = doc_info['filename']
             original_filename = doc_info.get('original_filename', filename)  # ✅ 優先使用 original_filename
@@ -131,23 +175,27 @@ class RAGEngine:
         
         return result
     
-    def _build_context(self, top_docs):
-        """建立上下文字串"""
+    def _build_context(self, deduplicated_docs):
+        """建立上下文字串（合併相同檔案的所有 chunks）"""
         context_parts = []
-        for i, doc in enumerate(top_docs, 1):
-            document = doc['document']
+        for i, doc_group in enumerate(deduplicated_docs, 1):
+            document = doc_group['document']
             filename = document['filename']
-            original_filename = document.get('original_filename', filename)  # ✅ 優先使用原始檔名
+            original_filename = document.get('original_filename', filename)
             
-            # 從 vector_store 獲取文檔完整內容
-            doc_content = self.vector_store.get_document_content(filename)
-            if doc_content and doc_content.get('original_content'):
-                content = doc_content['original_content']
-                context_parts.append(f"文檔{i}（{original_filename}）：\n{content}\n")  # ✅ 使用原始檔名
-            else:
-                # 如果無法獲取內容，使用摘要
-                summary = doc.get('summary', '')
-                context_parts.append(f"文檔{i}（{original_filename}）：\n{summary}\n")  # ✅ 使用原始檔名
+            # 收集所有相關 chunks 的內容並合併
+            all_chunks = doc_group.get('all_chunks', [])
+            combined_content = []
+            
+            for chunk in all_chunks:
+                chunk_filename = chunk['document']['filename']
+                doc_content = self.vector_store.get_document_content(chunk_filename)
+                if doc_content and doc_content.get('original_content'):
+                    combined_content.append(doc_content['original_content'])
+            
+            # 合併所有 chunks 的內容
+            full_content = "\n\n".join(combined_content) if combined_content else ""
+            context_parts.append(f"文檔{i}（{original_filename}）：\n{full_content}\n")
         
         return "\n".join(context_parts)
     
