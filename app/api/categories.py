@@ -1,6 +1,6 @@
 """分類管理 API 路由"""
 
-from typing import Optional
+from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +22,30 @@ from app.schemas.category import (
 from app.services.activity import activity_service
 
 router = APIRouter(prefix="/categories", tags=["categories"])
+
+
+@router.get("/query", response_model=CategoryListResponse)
+async def get_categories_for_query(
+    department_id: int = Query(..., description="處室 ID"),
+    db: AsyncSession = Depends(get_db)
+):
+    """取得指定處室的分類列表（供查詢頁面使用）
+    
+    - 不需要登入即可使用
+    - 回傳指定處室的所有分類
+    - 不包含檔案數量統計
+    """
+    # 查詢分類
+    query = select(Category).where(
+        Category.department_id == department_id
+    ).order_by(Category.name)
+    
+    result = await db.execute(query)
+    categories = result.scalars().all()
+    
+    return CategoryListResponse(
+        items=[CategorySchema.model_validate(c) for c in categories]
+    )
 
 
 @router.get("/", response_model=CategoryListResponse)

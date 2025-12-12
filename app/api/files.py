@@ -42,7 +42,7 @@ router = APIRouter(prefix="/files", tags=["files"])
 @router.get("/", response_model=FileListResponse)
 async def get_files(
     page: int = Query(1, ge=1, description="頁碼"),
-    limit: int = Query(10, ge=1, le=100, description="每頁數量"),
+    limit: int = Query(10, ge=1, le=10000, description="每頁數量"),
     category_id: Optional[int] = Query(None, description="分類ID篩選"),
     search: Optional[str] = Query(None, description="搜尋檔名或描述"),
     sort: str = Query("created_at", regex="^(filename|created_at|file_size)$", description="排序欄位"),

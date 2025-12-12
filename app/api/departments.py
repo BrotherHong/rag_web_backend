@@ -209,10 +209,10 @@ async def create_department(
     db.add(department)
     await db.flush()  # 先 flush 以取得 department.id
     
-    # 自動建立"未分類"分類
+    # 自動建立"其他"分類
     default_category = Category(
-        name="未分類",
-        description="尚未分類的檔案",
+        name="其他",
+        description="不屬於以上任一分類的檔案",
         color="#6B7280",  # 灰色
         department_id=department.id
     )

@@ -64,7 +64,8 @@ class RAGEngine:
     
     def query(self, question: str, 
               top_k: int = 250, 
-              include_similarity_scores: bool = False) -> Dict:
+              include_similarity_scores: bool = False,
+              allowed_filenames: set = None) -> Dict:
         """
         執行RAG查詢
         
@@ -72,18 +73,22 @@ class RAGEngine:
             question: 用戶問題
             top_k: 檢索文檔數量
             include_similarity_scores: 是否在結果中包含相似度分數
+            allowed_filenames: 允許的檔案名稱集合，None 表示不過濾
             
         返回:
             查詢結果字典
         """
         print(f"\n=== RAG查詢 ===")
         print(f"問題: {question}")
+        if allowed_filenames:
+            print(f"分類過濾: 限制在 {len(allowed_filenames)} 個檔案內")
         
         # 1. 檢索相關文檔
         similar_docs = self.vector_store.search_similar(
             query_text=question,
             top_k=top_k,
-            similarity_threshold=self.similarity_threshold
+            similarity_threshold=self.similarity_threshold,
+            allowed_filenames=allowed_filenames
         )
         
         if not similar_docs:

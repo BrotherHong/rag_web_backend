@@ -81,7 +81,7 @@ class VectorStore:
         print(f"成功加載 {len(embeddings)} 個embeddings")
         return embeddings, documents
     
-    def search_similar(self, query_text: str, top_k: int = 5, similarity_threshold: float = 0.1) -> List[Dict]:
+    def search_similar(self, query_text: str, top_k: int = 5, similarity_threshold: float = 0.1, allowed_filenames: set = None) -> List[Dict]:
         """
         搜索與查詢文本最相似的文檔
         
@@ -89,12 +89,15 @@ class VectorStore:
             query_text: 查詢文本
             top_k: 返回前K個最相似的結果
             similarity_threshold: 相似度閾值
+            allowed_filenames: 允許的檔案名稱集合，None 表示不過濾
             
         返回:
             相似文檔列表，每個包含文檔信息和相似度分數
         """
         # 生成查詢的embedding
         print(f"正在為查詢生成embedding: '{query_text}'")
+        if allowed_filenames:
+            print(f"  檔案過濾: 只檢索 {len(allowed_filenames)} 個允許的檔案")
         query_embedding = self.embedding_processor.generate_embedding(query_text)
         
         if not query_embedding:
@@ -111,6 +114,11 @@ class VectorStore:
         # 計算相似度
         similarities = []
         for i, doc_embedding in enumerate(embeddings):
+            # 檢查檔案是否在允許清單中
+            doc_filename = documents[i].get('original_filename') or documents[i].get('filename')
+            if allowed_filenames is not None and doc_filename not in allowed_filenames:
+                continue  # 跳過不在允許清單中的檔案
+            
             similarity = self.embedding_processor.cosine_similarity(query_embedding, doc_embedding)
             
             # 檢查相似度閾值

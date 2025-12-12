@@ -92,6 +92,42 @@ async def query_documents(
                 detail="未登入用戶必須指定 scope_ids"
             )
         
+        # 處理分類過濾：如果有指定 category_ids，查詢符合條件的檔案清單
+        allowed_filenames = None  # None 表示不過濾（查詢所有檔案）
+        if request.category_ids:
+            from app.models.category import Category
+            from app.models.file import File as FileModel
+            
+            # 1. 找出該處室的「其他」分類 ID
+            other_category_query = select(Category.id).where(
+                Category.department_id == department_id,
+                Category.name == "其他"
+            )
+            other_category_result = await db.execute(other_category_query)
+            other_category_id = other_category_result.scalar_one_or_none()
+            
+            # 2. 建立完整的分類 ID 清單（使用者選的 + 「其他」）
+            filter_category_ids = list(request.category_ids)
+            if other_category_id and other_category_id not in filter_category_ids:
+                filter_category_ids.append(other_category_id)
+            
+            # 3. 查詢符合分類條件的檔案
+            file_query = select(FileModel.original_filename).where(
+                FileModel.department_id == department_id,
+                FileModel.category_id.in_(filter_category_ids),
+                FileModel.is_vectorized == True  # 只查詢已向量化的檔案
+            )
+            file_result = await db.execute(file_query)
+            allowed_filenames = {row[0] for row in file_result.all()}  # 使用 set 加速查詢
+            
+            if not allowed_filenames:
+                # 沒有符合條件的檔案，直接回傳空結果
+                return QueryResponse(
+                    query=request.query,
+                    answer="抱歉，在選定的分類中找不到相關資訊。",
+                    sources=[]
+                )
+        
         # 動態初始化對應處室的 RAG 引擎
         base_path = f"uploads/{department_id}/processed"
         try:
@@ -108,7 +144,8 @@ async def query_documents(
         result = dept_rag_engine.query(
             question=request.query,
             top_k=250,
-            include_similarity_scores=True  # Include scores for metadata
+            include_similarity_scores=True,  # Include scores for metadata
+            allowed_filenames=allowed_filenames  # 傳遞檔案過濾清單
         )
         
         processing_time = time.time() - start_time

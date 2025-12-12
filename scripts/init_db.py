@@ -66,7 +66,7 @@ async def init_categories(session: AsyncSession):
     # 每個處室的預設分類（不同處室有不同的分類）
     categories_by_dept = {
         "人事室": [
-            {"name": "未分類", "description": "尚未分類的檔案", "color": "#6B7280", "is_default": True},
+            {"name": "其他", "description": "不屬於以上任一分類的檔案", "color": "#6B7280", "is_default": True},
             {"name": "人事政策", "description": "人事相關政策與規範", "color": "#3B82F6"},
             {"name": "員工資料", "description": "員工基本資料與檔案", "color": "#8B5CF6"},
             {"name": "考勤管理", "description": "出勤記錄與假單", "color": "#EC4899"},
@@ -74,7 +74,7 @@ async def init_categories(session: AsyncSession):
             {"name": "教育訓練", "description": "培訓課程與記錄", "color": "#10B981"},
         ],
         "會計室": [
-            {"name": "未分類", "description": "尚未分類的檔案", "color": "#6B7280", "is_default": True},
+            {"name": "其他", "description": "不屬於以上任一分類的檔案", "color": "#6B7280", "is_default": True},
             {"name": "財務報表", "description": "財務報告與報表", "color": "#10B981"},
             {"name": "預算管理", "description": "預算編制與執行", "color": "#F59E0B"},
             {"name": "會計憑證", "description": "會計憑證與帳簿", "color": "#EF4444"},
@@ -82,7 +82,7 @@ async def init_categories(session: AsyncSession):
             {"name": "審計資料", "description": "內外部審計資料", "color": "#6366F1"},
         ],
         "總務處": [
-            {"name": "未分類", "description": "尚未分類的檔案", "color": "#6B7280", "is_default": True},
+            {"name": "其他", "description": "不屬於以上任一分類的檔案", "color": "#6B7280", "is_default": True},
             {"name": "採購文件", "description": "採購申請與合約", "color": "#F59E0B"},
             {"name": "資產管理", "description": "資產清冊與盤點", "color": "#06B6D4"},
             {"name": "設施維護", "description": "設施維修與保養記錄", "color": "#EF4444"},

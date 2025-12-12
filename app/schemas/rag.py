@@ -10,12 +10,14 @@ class QueryRequest(BaseModel):
     
     query: str = Field(..., min_length=1, max_length=1000, description="查詢問題")
     scope_ids: Optional[List[int]] = Field(default=None, description="範圍限定 ID（第一個元素為 department_id）")
+    category_ids: Optional[List[int]] = Field(default=None, description="分類 ID 列表（會自動包含「其他」分類）")
     
     class Config:
         json_schema_extra = {
             "example": {
                 "query": "人事室的聯絡方式是什麼？",
-                "scope_ids": [1]
+                "scope_ids": [1],
+                "category_ids": [1, 2, 3]
             }
         }
 
