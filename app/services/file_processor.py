@@ -52,17 +52,30 @@ class FileProcessingService:
             'total': len(file_ids),
             'success': 0,
             'failed': 0,
-            'errors': []
+            'errors': [],
+            'file_results': []  # 新增：每個檔案的詳細結果
         }
         
         for idx, file_id in enumerate(file_ids):
+            file_result = {
+                'file_id': file_id,
+                'filename': None,
+                'success': False,
+                'error': None
+            }
+            
             try:
                 # 獲取檔案記錄
                 file_record = await db.get(File, file_id)
                 if not file_record:
                     results['failed'] += 1
-                    results['errors'].append(f"檔案 ID {file_id} 不存在")
+                    error_msg = f"檔案 ID {file_id} 不存在"
+                    results['errors'].append(error_msg)
+                    file_result['error'] = error_msg
+                    results['file_results'].append(file_result)
                     continue
+                
+                file_result['filename'] = file_record.original_filename
                 
                 # 更新狀態為處理中
                 file_record.status = FileStatus.PROCESSING
@@ -78,42 +91,46 @@ class FileProcessingService:
                     file_record.processing_step = "completed"
                     file_record.processing_progress = 100
                     results['success'] += 1
+                    file_result['success'] = True
+                    await db.commit()
                 else:
-                    file_record.status = FileStatus.FAILED
+                    # 處理失敗，_process_single_file 已經清理了檔案和資料庫記錄
                     results['failed'] += 1
+                    error_msg = f"檔案處理失敗已被清除"
+                    results['errors'].append(error_msg)
+                    file_result['error'] = error_msg
                 
-                await db.commit()
+                results['file_results'].append(file_result)
                 
             except Exception as e:
                 results['failed'] += 1
-                results['errors'].append(f"檔案 ID {file_id}: {str(e)}")
+                error_msg = f"{str(e)}"
+                results['errors'].append(error_msg)
+                file_result['error'] = error_msg
+                results['file_results'].append(file_result)
                 
-                # 更新為失敗狀態並清理檔案
+                # 異常發生時，執行完整清理
                 try:
                     file_record = await db.get(File, file_id)
                     if file_record:
-                        print(f"\n❌ 處理失敗，開始清理檔案 ID {file_id}: {file_record.original_filename}")
+                        file_result['filename'] = file_record.original_filename
+                        print(f"\n❌ 發生異常，開始清理檔案 ID {file_id}: {file_record.original_filename}")
                         
-                        # 標記為失敗
-                        file_record.status = FileStatus.FAILED
-                        file_record.error_message = str(e)
-                        
-                        # 刪除實體檔案
-                        from app.services.file_storage import file_storage
+                        # 刪除 unprocessed 中的實體檔案
                         if file_record.file_path and os.path.exists(file_record.file_path):
                             try:
                                 os.remove(file_record.file_path)
-                                print(f"🗑️ 已刪除失敗的原始檔案: {file_record.file_path}")
+                                print(f"   ✅ 已刪除原始檔案: {file_record.file_path}")
                             except Exception as del_error:
-                                print(f"⚠️ 刪除失敗檔案時出錯: {del_error}")
+                                print(f"   ⚠️ 刪除檔案時出錯: {del_error}")
                         
                         # 刪除資料庫記錄
                         await db.delete(file_record)
                         await db.commit()
-                        print(f"🗑️ 已刪除失敗的資料庫記錄 ID {file_id}")
+                        print(f"   ✅ 已刪除資料庫記錄 ID {file_id}")
                 except Exception as cleanup_error:
-                    print(f"⚠️ 清理失敗檔案時出錯: {cleanup_error}")
-                    pass
+                    print(f"   ⚠️ 清理失敗檔案時出錯: {cleanup_error}")
+                    await db.rollback()
         
         return results
     
@@ -350,15 +367,36 @@ class FileProcessingService:
             print(f"\n❌ 處理失敗: {e}")
             file_record.error_message = str(e)
             
-            # 失敗時清理當前的暫存目錄
+            # 失敗時完整清理：暫存目錄 + unprocessed檔案 + 資料庫記錄
+            print(f"🗑️ 開始清理失敗的檔案...")
+            
+            # 1. 清理暫存目錄
             if temp_dir and temp_dir.exists():
                 try:
                     shutil.rmtree(temp_dir)
-                    print(f"🗑️ 已清理暫存目錄（處理失敗）")
-                    self.last_temp_dir = None  # 清除記錄
+                    print(f"   ✅ 已清理暫存目錄")
+                    self.last_temp_dir = None
                 except Exception as cleanup_error:
-                    print(f"⚠️ 清理暫存目錄失敗: {cleanup_error}")
+                    print(f"   ⚠️ 清理暫存目錄失敗: {cleanup_error}")
             
+            # 2. 刪除 unprocessed 中的原始檔案
+            if file_path.exists():
+                try:
+                    file_path.unlink()
+                    print(f"   ✅ 已刪除 unprocessed 檔案: {file_path}")
+                except Exception as del_error:
+                    print(f"   ⚠️ 刪除 unprocessed 檔案失敗: {del_error}")
+            
+            # 3. 刪除資料庫記錄
+            try:
+                await db.delete(file_record)
+                await db.commit()
+                print(f"   ✅ 已刪除資料庫記錄 ID: {file_record.id}")
+            except Exception as db_error:
+                print(f"   ⚠️ 刪除資料庫記錄失敗: {db_error}")
+                await db.rollback()
+            
+            print(f"🗑️ 失敗檔案清理完成")
             return False
 
 

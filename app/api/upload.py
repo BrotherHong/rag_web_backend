@@ -326,12 +326,28 @@ async def process_files_in_background(file_ids: List[int], task_id: str):
             print(f"成功: {results['success']}, 失敗: {results['failed']}")
             print(f"{'='*60}\n")
             
-            # 更新任務狀態
+            # 更新任務狀態和每個檔案的狀態
             if task_id in upload_tasks:
                 task = upload_tasks[task_id]
                 task["processing_results"] = results
                 task["status"] = "completed" if results["failed"] == 0 else "partial"
-                task["completed_at"] = datetime.now(timezone.utc)  # 添加完成時間
+                task["successFiles"] = results["success"]
+                task["failedFiles"] = results["failed"]
+                task["processedFiles"] = results["success"] + results["failed"]
+                
+                # 根據 file_results 更新每個檔案的狀態
+                if "file_results" in results:
+                    for i, file_result in enumerate(results["file_results"]):
+                        if i < len(task["files"]):
+                            if file_result["success"]:
+                                task["files"][i]["status"] = "completed"
+                                task["files"][i]["progress"] = 100
+                            else:
+                                task["files"][i]["status"] = "failed"
+                                task["files"][i]["error"] = file_result.get("error", "處理失敗")
+                                task["files"][i]["progress"] = 0
+                
+                task["completed_at"] = datetime.now(timezone.utc)
                 task["updated_at"] = datetime.now().isoformat()
                 
         except Exception as e:
@@ -557,7 +573,7 @@ async def check_duplicates(
                 "name": conflict_file.original_filename,
                 "size": f"{conflict_file.file_size / 1024:.1f} KB" if conflict_file.file_size else "未知",
                 "uploadDate": conflict_file.created_at.strftime("%Y-%m-%d %H:%M"),
-                "category": conflict_file.category.name if conflict_file.category else "未分類"
+                "category": conflict_file.category.name if conflict_file.category else "其他"
             }
         
         results.append(file_result)
