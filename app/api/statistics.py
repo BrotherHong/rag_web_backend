@@ -3,11 +3,12 @@
 import os
 import shutil
 import platform
+from urllib.parse import urlparse
 from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select, desc
+from sqlalchemy import func, select, desc, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -16,6 +17,17 @@ from app.models import Activity, File, User, UserRole, Category, QueryHistory
 from app.config import settings
 
 router = APIRouter(tags=["統計與系統"])
+
+
+def _format_bytes(num: int) -> str:
+    if num is None:
+        return "未知"
+    if num == 0:
+        return "0 B"
+    units = ["B", "KB", "MB", "GB", "TB"]
+    idx = min(len(units) - 1, int((num).bit_length() / 10))
+    value = num / (1024 ** idx)
+    return f"{value:.2f} {units[idx]}"
 
 
 @router.get("/statistics", summary="取得系統統計資料")
@@ -177,17 +189,70 @@ async def get_system_info(
     total_files = await db.scalar(select(func.count(File.id))) or 0
     total_users = await db.scalar(select(func.count(User.id))) or 0
     total_activities = await db.scalar(select(func.count(Activity.id))) or 0
+
+    # 資料庫大小（盡可能取精確值）
+    database_size_bytes = None
+    parsed = urlparse(settings.DATABASE_URL)
+
+    if parsed.scheme.startswith("sqlite"):
+        # sqlite 路徑格式: sqlite+aiosqlite:///absolute/path/to/db.sqlite
+        db_path = parsed.path
+        if db_path and not db_path.startswith("/"):
+            db_path = os.path.join(os.getcwd(), db_path)
+        if db_path and os.path.exists(db_path):
+            database_size_bytes = os.path.getsize(db_path)
+    elif parsed.scheme.startswith("postgres"):
+        try:
+            result = await db.execute(text("SELECT pg_database_size(current_database())"))
+            database_size_bytes = result.scalar()
+        except Exception:
+            database_size_bytes = None
+    elif parsed.scheme.startswith("mysql"):
+        try:
+            result = await db.execute(text("SELECT SUM(DATA_LENGTH + INDEX_LENGTH) FROM information_schema.tables WHERE table_schema = DATABASE()"))
+            database_size_bytes = result.scalar()
+        except Exception:
+            database_size_bytes = None
+
+    if database_size_bytes is None:
+        # 回退估算，以免回傳空值
+        database_size_bytes = int((total_files * 0.01 + total_activities * 0.001) * 1024 * 1024)
+
+    database_size = _format_bytes(database_size_bytes)
     
-    # 資料庫大小（估算）
-    database_size = f"約 {(total_files * 0.01 + total_activities * 0.001):.2f} MB"
-    
-    # 3. 系統平台資訊（跨平台）
+    # 3. 系統平台與資源資訊
     try:
         platform_info = f"{platform.system()} {platform.release()}"
         python_version = platform.python_version()
         platform_full = f"{platform_info} (Python {python_version})"
     except:
         platform_full = "Unknown Platform"
+
+    # CPU / Memory：盡量提供數值，若無法取得則給 None
+    cpu_usage = None
+    memory_usage = None
+    try:
+        if hasattr(os, "getloadavg") and os.cpu_count():
+            load1, _, _ = os.getloadavg()
+            cpu_usage = round(load1 / os.cpu_count() * 100, 1)
+    except Exception:
+        cpu_usage = None
+
+    try:
+        import psutil  # type: ignore
+        memory = psutil.virtual_memory()
+        memory_usage = round(memory.percent, 1)
+        if cpu_usage is None:
+            cpu_usage = round(psutil.cpu_percent(interval=0.1), 1)
+    except Exception:
+        memory_usage = memory_usage or None
+        cpu_usage = cpu_usage or None
+
+    # 4. API 請求量（以 QueryHistory 計數為簡易替代，若不存在則回傳 0）
+    try:
+        api_requests = await db.scalar(select(func.count(QueryHistory.id))) or 0
+    except Exception:
+        api_requests = 0
     
     return {
         "version": "1.0.0",
@@ -196,5 +261,9 @@ async def get_system_info(
         "totalFiles": total_files,
         "totalUsers": total_users,
         "totalActivities": total_activities,
-        "storage": storage
+        "storage": storage,
+        "databaseSizeBytes": database_size_bytes,
+        "cpuUsage": cpu_usage,
+        "memoryUsage": memory_usage,
+        "apiRequests": api_requests
     }
