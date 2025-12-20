@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import JSONResponse
 from sqlalchemy import func, select, desc, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -98,6 +99,65 @@ async def get_statistics(
         query_count_query = query_count_query.where(QueryHistory.department_id == department_filter)
     monthly_queries = await db.scalar(query_count_query) or 0
     
+    # 3.5 查詢類別統計（從 QueryHistory 的 extra_data 中提取 category_ids）
+    queries_by_category = []
+    try:
+        # 取得該處室所有查詢記錄
+        history_query = select(QueryHistory.extra_data).where(
+            QueryHistory.created_at >= month_start
+        )
+        if department_filter:
+            history_query = history_query.where(QueryHistory.department_id == department_filter)
+        
+        history_result = await db.execute(history_query)
+        category_count = {}
+        no_category_count = 0  # 統計未選擇類別的查詢
+        
+        # 統計每個類別被使用的次數
+        for row in history_result:
+            extra_data = row[0] or {}
+            category_ids = extra_data.get('category_ids', [])
+            
+            if not category_ids or len(category_ids) == 0:
+                # 未選擇類別
+                no_category_count += 1
+            else:
+                for cat_id in category_ids:
+                    category_count[cat_id] = category_count.get(cat_id, 0) + 1
+        
+        # 取得類別名稱和顏色
+        if category_count:
+            category_ids_list = list(category_count.keys())
+            cat_info_query = select(Category.id, Category.name, Category.color).where(
+                Category.id.in_(category_ids_list)
+            )
+            cat_info_result = await db.execute(cat_info_query)
+            
+            queries_by_category = [
+                {
+                    "categoryId": row.id,
+                    "categoryName": row.name,
+                    "color": row.color or "#6b7280",
+                    "queryCount": category_count[row.id]
+                }
+                for row in cat_info_result
+            ]
+        
+        # 如果有未選擇類別的查詢，加入統計
+        if no_category_count > 0:
+            queries_by_category.append({
+                "categoryId": None,
+                "categoryName": "全部類別",
+                "color": "#9ca3af",  # 灰色
+                "queryCount": no_category_count
+            })
+        
+        # 按查詢次數降序排序
+        queries_by_category.sort(key=lambda x: x['queryCount'], reverse=True)
+    except Exception as e:
+        print(f"查詢類別統計失敗: {e}")
+        queries_by_category = []
+    
     # 4. 儲存空間使用情況
     upload_dir = settings.UPLOAD_DIR
     if os.path.exists(upload_dir):
@@ -128,6 +188,7 @@ async def get_statistics(
         "totalFiles": total_files,
         "filesByCategory": files_by_category,
         "monthlyQueries": monthly_queries,
+        "queriesByCategory": queries_by_category,
         "systemStatus": system_status,
         "storageUsed": storage_used,
         "storageTotal": storage_total
@@ -190,7 +251,7 @@ async def get_system_info(
     total_users = await db.scalar(select(func.count(User.id))) or 0
     total_activities = await db.scalar(select(func.count(Activity.id))) or 0
 
-    # 資料庫大小（盡可能取精確值）
+    # 資料庫大小（盡可能取精確值）+ uploads 目錄大小
     database_size_bytes = None
     parsed = urlparse(settings.DATABASE_URL)
 
@@ -204,7 +265,7 @@ async def get_system_info(
     elif parsed.scheme.startswith("postgres"):
         try:
             result = await db.execute(text("SELECT pg_database_size(current_database())"))
-            database_size_bytes = result.scalar()
+            database_size_bytes = result.scalar() or 0
         except Exception:
             database_size_bytes = None
     elif parsed.scheme.startswith("mysql"):
@@ -218,7 +279,24 @@ async def get_system_info(
         # 回退估算，以免回傳空值
         database_size_bytes = int((total_files * 0.01 + total_activities * 0.001) * 1024 * 1024)
 
-    database_size = _format_bytes(database_size_bytes)
+    # 加上 uploads 目錄大小
+    uploads_size = 0
+    upload_dir = settings.UPLOAD_DIR
+    if os.path.exists(upload_dir):
+        try:
+            for dirpath, dirnames, filenames in os.walk(upload_dir):
+                for filename in filenames:
+                    filepath = os.path.join(dirpath, filename)
+                    try:
+                        uploads_size += os.path.getsize(filepath)
+                    except (OSError, FileNotFoundError):
+                        continue
+        except Exception:
+            pass
+    
+    # 總大小 = 資料庫 + uploads
+    total_data_size_bytes = database_size_bytes + uploads_size
+    database_size = _format_bytes(total_data_size_bytes)
     
     # 3. 系統平台與資源資訊
     try:
@@ -253,8 +331,72 @@ async def get_system_info(
         api_requests = await db.scalar(select(func.count(QueryHistory.id))) or 0
     except Exception:
         api_requests = 0
+
+    # 5. 查詢統計資料
+    query_stats = {
+        "totalQueries": 0,
+        "queriesByDepartment": [],
+        "averageResponseTime": None,
+        "visitsByDepartment": []
+    }
     
-    return {
+    try:
+        from app.models import Department
+        
+        # 總查詢次數
+        total_queries = await db.scalar(select(func.count(QueryHistory.id))) or 0
+        query_stats["totalQueries"] = total_queries
+        
+        # 各處室查詢次數
+        dept_query = select(
+            Department.id,
+            Department.name,
+            func.count(QueryHistory.id).label('query_count')
+        ).select_from(QueryHistory).join(
+            Department, QueryHistory.department_id == Department.id
+        ).group_by(Department.id, Department.name).order_by(desc('query_count'))
+        
+        dept_result = await db.execute(dept_query)
+        queries_by_dept = [
+            {
+                "departmentId": row.id,
+                "departmentName": row.name,
+                "queryCount": row.query_count
+            }
+            for row in dept_result
+        ]
+        query_stats["queriesByDepartment"] = queries_by_dept
+        
+        # 平均回應時間（秒）
+        avg_time = await db.scalar(select(func.avg(QueryHistory.processing_time)))
+        if avg_time is not None:
+            query_stats["averageResponseTime"] = round(float(avg_time), 2)
+        
+        # 處室造訪人次（使用不同使用者的查詢次數統計）
+        visit_query = select(
+            Department.id,
+            Department.name,
+            func.count(func.distinct(QueryHistory.user_id)).label('visits')
+        ).select_from(QueryHistory).join(
+            Department, QueryHistory.department_id == Department.id
+        ).group_by(Department.id, Department.name).order_by(desc('visits'))
+        
+        visit_result = await db.execute(visit_query)
+        visits_by_dept = [
+            {
+                "departmentId": row.id,
+                "departmentName": row.name,
+                "visits": row.visits
+            }
+            for row in visit_result
+        ]
+        query_stats["visitsByDepartment"] = visits_by_dept
+        
+    except Exception as e:
+        # 若查詢統計失敗，回傳空資料
+        pass
+    
+    payload = {
         "version": "1.0.0",
         "platform": platform_full,
         "databaseSize": database_size,
@@ -262,8 +404,20 @@ async def get_system_info(
         "totalUsers": total_users,
         "totalActivities": total_activities,
         "storage": storage,
-        "databaseSizeBytes": database_size_bytes,
+        "databaseSizeBytes": total_data_size_bytes,
         "cpuUsage": cpu_usage,
         "memoryUsage": memory_usage,
-        "apiRequests": api_requests
+        "apiRequests": api_requests,
+        "updatedAt": datetime.utcnow().isoformat() + "Z",
+        "queryStats": query_stats,
     }
+
+    # 禁用快取，確保每次都拿到最新數據
+    return JSONResponse(
+        content=payload,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )

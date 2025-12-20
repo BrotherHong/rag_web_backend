@@ -85,9 +85,9 @@ class QueryHistory(Base, TimestampMixin):
     )
     
     # 外鍵
-    user_id: Mapped[int] = mapped_column(
+    user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
         comment="使用者 ID"
     )

@@ -12,6 +12,7 @@ from app.core.database import get_db
 from app.core.security import get_current_user
 from app.config import settings
 from app.models.user import User
+from app.models.query_history import QueryHistory
 from app.schemas.rag import (
     QueryRequest,
     QueryResponse,
@@ -191,7 +192,52 @@ async def query_documents(
                     "query_department_id": department_id
                 })
             )
-        
+            
+            # 記錄到 QueryHistory (只記錄已登入使用者)
+            query_history = QueryHistory(
+                user_id=current_user.id,
+                department_id=department_id,
+                query=request.query,
+                answer=result['answer'],
+                processing_time=processing_time,
+                source_count=len(sources),
+                query_type="semantic",
+                scope="all",
+                extra_data={
+                    "category_ids": request.category_ids or [],
+                    "scope_ids": request.scope_ids or [],
+                    "retrieved_docs": result.get('retrieved_docs', 0)
+                }
+            )
+            db.add(query_history)
+            await db.commit()
+            print(f"✅ QueryHistory saved: query_id={query_history.id}, user_id={current_user.id}")
+        else:
+            try:
+                anonymous_history = QueryHistory(
+                    user_id=None,
+                    department_id=department_id,
+                    query=request.query,
+                    answer=result['answer'],
+                    processing_time=processing_time,
+                    source_count=len(sources),
+                    query_type="semantic",
+                    scope="all",
+                    extra_data={
+                        "category_ids": request.category_ids or [],
+                        "scope_ids": request.scope_ids or [],
+                        "retrieved_docs": result.get('retrieved_docs', 0)
+                    }
+                )
+                db.add(anonymous_history)
+                await db.commit()
+                print(f"✅ QueryHistory saved (anonymous): query_id={anonymous_history.id}")
+            except Exception as e:
+                print(f"❌ Failed to save anonymous QueryHistory: {e}")
+                import traceback
+                traceback.print_exc()
+                await db.rollback()
+
         # Return simplified response
         return QueryResponse(
             query=request.query,
