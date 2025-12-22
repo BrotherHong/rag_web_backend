@@ -33,10 +33,16 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: str = "http://localhost:5174,http://localhost:3000"
     
-    # Ollama LLM 設定
-    OLLAMA_BASE_URL: str = "https://primehub.aic.ncku.edu.tw/console/apps/ollama-0-11-10-z0s7s"
-    OLLAMA_LLM_MODEL: str = "qwen2.5:14b"
-    OLLAMA_EMBEDDING_MODEL: str = "bge-m3"
+    # ==================== Ollama 設定 ====================
+    # 所有 Ollama 服務統一使用此 URL（包含摘要生成、向量嵌入、RAG 回答生成）
+    OLLAMA_BASE_URL: str = "https://primehub.aic.ncku.edu.tw/console/apps/ollama-0-11-10-baogm"
+    
+    # LLM 模型設定（用於文字生成任務）
+    OLLAMA_SUMMARY_MODEL: str = "qwen2.5:14b"  # 用於文件摘要生成（SummaryProcessor）
+    OLLAMA_RAG_MODEL: str = "qwen2.5:32b"      # 用於 RAG 回答生成（RAGEngine）
+    
+    # Embedding 模型設定（用於向量嵌入）
+    OLLAMA_EMBEDDING_MODEL: str = "bge-m3"     # 用於文件向量化和查詢向量化（EmbeddingProcessor）
     
     model_config = SettingsConfigDict(
         env_file=".env",

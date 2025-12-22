@@ -7,6 +7,7 @@ import os
 from typing import List, Dict, Optional
 from app.services.llm.ollama_client import OllamaClient
 from app.services.llm.prompts.rag import RAG_ANSWER_PROMPT, RAG_NO_RESULTS_PROMPT
+from app.config import settings
 from .vector_store import VectorStore
 from .reranker import Reranker
 
@@ -18,8 +19,8 @@ class RAGEngine:
     
     def __init__(self, 
                  base_path="uploads/1/processed",
-                 base_url="https://primehub.aic.ncku.edu.tw/console/apps/ollama-0-11-10-z0s7s",
-                 model="qwen2.5:32b",
+                 base_url: str = None,
+                 model: str = None,
                  similarity_threshold=0.1,
                  max_context_docs=3,
                  debug_mode=False):
@@ -34,6 +35,10 @@ class RAGEngine:
             max_context_docs: 用於上下文的最大文檔數
             debug_mode: 是否輸出 debug log
         """
+        # 使用 config 的預設值
+        base_url = base_url or settings.OLLAMA_BASE_URL
+        model = model or settings.OLLAMA_RAG_MODEL
+        
         self.client = OllamaClient(base_url=base_url, model=model)
         self.vector_store = VectorStore(base_path=base_path)
         self.similarity_threshold = similarity_threshold

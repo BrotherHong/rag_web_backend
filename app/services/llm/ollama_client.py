@@ -21,7 +21,7 @@ class OllamaClient:
             model: 使用的模型名稱（預設從設定檔讀取）
         """
         self.base_url = base_url or settings.OLLAMA_BASE_URL
-        self.model = model or settings.OLLAMA_LLM_MODEL
+        self.model = model or settings.OLLAMA_SUMMARY_MODEL
         self.converter = opencc.OpenCC('s2t')  # 簡體轉繁體
     
     def generate(self, prompt: str, timeout: int = 300) -> str:

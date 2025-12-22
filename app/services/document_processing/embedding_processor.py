@@ -25,16 +25,11 @@ class EmbeddingProcessor:
         初始化Embedding處理器
         
         參數:
-            ollama_client: OllamaClient 實例（優先使用）
-            base_url: Ollama伺服器地址（預設從設定檔讀取）
-            embedding_model: 使用的embedding模型（預設從設定檔讀取）
+            ollama_client: OllamaClient 實例（優先使用，如未提供則自動創建）
+            base_url: Ollama伺服器地址
+            embedding_model: 使用的embedding模型
         """
-        if ollama_client:
-            self.client = ollama_client
-        else:
-            self.base_url = base_url or settings.OLLAMA_BASE_URL
-            self.client = OllamaClient(base_url=self.base_url)
-        
+        self.client = ollama_client or OllamaClient(base_url=base_url or settings.OLLAMA_BASE_URL)
         self.embedding_model = embedding_model or settings.OLLAMA_EMBEDDING_MODEL
     
     def generate_embedding(self, text: str, model: str = None) -> Optional[List[float]]:
